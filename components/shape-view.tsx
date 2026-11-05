@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { getStroke } from "perfect-freehand";
-import type { Shape } from "@/lib/board";
+import { HIGHLIGHT_SCALE, inkWidth, worldPoints, type Point, type Shape } from "@/lib/board";
 
 // From the perfect-freehand README: outline polygon -> smooth SVG path.
 function outlineToPath(points: number[][]): string {
@@ -18,21 +18,22 @@ function outlineToPath(points: number[][]): string {
   return d + "Z";
 }
 
-const HIGHLIGHT_SCALE = 4;
-
 type Paint = { stroke: string; strokeWidth: number };
 
-/** Outline geometry; drawn once visibly and once as a fat transparent hit area. */
-function geometry(s: Shape, paint: Paint) {
-  const [[x1, y1], [x2, y2] = [x1, y1]] = s.points;
+const xy = ([x, y]: Point) => `${x},${y}`;
+
+/** Outline geometry from world points; drawn once visibly and once as a fat transparent hit area. */
+function geometry(s: Shape, pts: Point[], paint: Paint) {
   const p = { ...paint, fill: "none", strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   switch (s.type) {
     case "stroke":
     case "highlight":
-      return <polyline points={s.points.map(([x, y]) => `${x},${y}`).join(" ")} {...p} />;
+      return <polyline points={pts.map(xy).join(" ")} {...p} />;
     case "line":
-      return <line x1={x1} y1={y1} x2={x2} y2={y2} {...p} />;
+      return <line x1={pts[0][0]} y1={pts[0][1]} x2={pts[1][0]} y2={pts[1][1]} {...p} />;
     case "arrow": {
+      // Head is built in world space so skew/scale never distort it.
+      const [[x1, y1], [x2, y2]] = pts;
       const angle = Math.atan2(y2 - y1, x2 - x1);
       const head = s.size * 3 + 8;
       const wing = (side: number) =>
@@ -40,17 +41,20 @@ function geometry(s: Shape, paint: Paint) {
       return <path d={`M${x1},${y1} L${x2},${y2} M${wing(1)} L${x2},${y2} L${wing(-1)}`} {...p} />;
     }
     case "rect":
-      return <rect x={Math.min(x1, x2)} y={Math.min(y1, y2)} width={Math.abs(x2 - x1)} height={Math.abs(y2 - y1)} rx={4} {...p} />;
-    case "ellipse":
-      return <ellipse cx={(x1 + x2) / 2} cy={(y1 + y2) / 2} rx={Math.abs(x2 - x1) / 2} ry={Math.abs(y2 - y1) / 2} {...p} />;
+      return <polygon points={pts.map(xy).join(" ")} {...p} />;
+    case "ellipse": {
+      const [start, ...rest] = pts.map(xy);
+      const curves = [0, 3, 6, 9].map((i) => `C${rest[i]} ${rest[i + 1]} ${rest[i + 2]}`).join(" ");
+      return <path d={`M${start} ${curves} Z`} {...p} />;
+    }
   }
 }
 
-function visible(s: Shape) {
-  if (s.type !== "stroke" && s.type !== "highlight") return geometry(s, { stroke: s.color, strokeWidth: s.size });
+function visible(s: Shape, pts: Point[]) {
+  if (s.type !== "stroke" && s.type !== "highlight") return geometry(s, pts, { stroke: s.color, strokeWidth: s.size });
   const hl = s.type === "highlight";
-  const outline = getStroke(s.points, {
-    size: hl ? s.size * HIGHLIGHT_SCALE : s.size * 2,
+  const outline = getStroke(pts, {
+    size: s.size * (hl ? HIGHLIGHT_SCALE : 2),
     thinning: hl ? 0 : 0.6,
     smoothing: 0.5,
     streamline: 0.5,
@@ -61,11 +65,11 @@ function visible(s: Shape) {
 }
 
 export const ShapeView = memo(function ShapeView({ shape, hidden }: { shape: Shape; hidden?: boolean }) {
-  const hitWidth = Math.max(shape.size * (shape.type === "highlight" ? HIGHLIGHT_SCALE : 2), 14);
+  const pts = worldPoints(shape);
   return (
     <g data-id={shape.id} opacity={hidden ? 0.2 : undefined}>
-      {visible(shape)}
-      {geometry(shape, { stroke: "transparent", strokeWidth: hitWidth })}
+      {visible(shape, pts)}
+      {geometry(shape, pts, { stroke: "transparent", strokeWidth: Math.max(inkWidth(shape), 14) })}
     </g>
   );
 });

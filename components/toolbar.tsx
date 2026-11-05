@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import {
-  ArrowUpRight, Circle, ClipboardPaste, Copy, Delete, Download, Eraser, FolderOpen, Grid3x3, Highlighter,
-  ImageDown, Minus, MousePointer2, PenLine, Redo2, Scissors, Square, Trash2, Undo2,
+  ArrowUpRight, BringToFront, Circle, ClipboardPaste, Copy, Delete, Download, Eraser, FlipHorizontal2, FlipVertical2,
+  FolderOpen, Grid3x3, Highlighter, ImageDown, Italic, Minus, MousePointer2, PenLine, Redo2, RotateCcw, RotateCw,
+  Scissors, SendToBack, Square, Trash2, Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -82,7 +83,14 @@ function useShortcuts() {
         return;
       }
       if (e.altKey) return;
-      if (k === "delete" || k === "backspace") s.remove(s.selected);
+      const selectionKeys: Record<string, () => void> = {
+        H: () => s.flipSelected("x"),
+        V: () => s.flipSelected("y"),
+        "]": () => s.reorderSelected("front"),
+        "[": () => s.reorderSelected("back"),
+      };
+      if (selectionKeys[e.key]) selectionKeys[e.key](); // e.key is "H" (not "h") only with Shift held
+      else if (k === "delete" || k === "backspace") s.remove(s.selected);
       else if (k === "escape") s.select([]);
       else {
         const t = TOOLS.find((t) => t.key === k);
@@ -174,6 +182,53 @@ export function Toolbar() {
           </PopoverContent>
         </Popover>
       </Bar>
+
+      {hasSelection && s.tool === "select" && (
+        <Bar className="top-16">
+          <Tip label="Flip horizontal" kbd="Shift+H">
+            <Button size="icon" variant="ghost" aria-label="Flip horizontal" onClick={() => s.flipSelected("x")}>
+              <FlipHorizontal2 />
+            </Button>
+          </Tip>
+          <Tip label="Flip vertical" kbd="Shift+V">
+            <Button size="icon" variant="ghost" aria-label="Flip vertical" onClick={() => s.flipSelected("y")}>
+              <FlipVertical2 />
+            </Button>
+          </Tip>
+          <Tip label="Rotate 90° left">
+            <Button size="icon" variant="ghost" aria-label="Rotate left" onClick={() => s.rotateSelected(-90)}>
+              <RotateCcw />
+            </Button>
+          </Tip>
+          <Tip label="Rotate 90° right">
+            <Button size="icon" variant="ghost" aria-label="Rotate right" onClick={() => s.rotateSelected(90)}>
+              <RotateCw />
+            </Button>
+          </Tip>
+          <Tip label="Skew mode: edge handles slant" kbd={`hold ${isMac ? "⌘" : "Ctrl"}`}>
+            <Button
+              size="icon"
+              variant={s.skewMode ? "default" : "ghost"}
+              aria-label="Skew mode"
+              aria-pressed={s.skewMode}
+              onClick={s.toggleSkewMode}
+            >
+              <Italic />
+            </Button>
+          </Tip>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <Tip label="Bring to front" kbd="]">
+            <Button size="icon" variant="ghost" aria-label="Bring to front" onClick={() => s.reorderSelected("front")}>
+              <BringToFront />
+            </Button>
+          </Tip>
+          <Tip label="Send to back" kbd="[">
+            <Button size="icon" variant="ghost" aria-label="Send to back" onClick={() => s.reorderSelected("back")}>
+              <SendToBack />
+            </Button>
+          </Tip>
+        </Bar>
+      )}
 
       <Bar className="bottom-3">
         <Tip label="Undo" kbd={mod("Z")}>
