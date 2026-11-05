@@ -1,6 +1,6 @@
 // Pure board model: shapes, geometry, history and file validation. No React here so it stays testable.
 
-export type ShapeType = "stroke" | "highlight" | "line" | "arrow" | "rect" | "ellipse";
+export type ShapeType = "stroke" | "highlight" | "line" | "arrow" | "rect" | "ellipse" | "fill";
 export type Point = [x: number, y: number, pressure: number];
 /** SVG-order affine matrix: x' = a·x + c·y + e, y' = b·x + d·y + f. */
 export type Matrix = [a: number, b: number, c: number, d: number, e: number, f: number];
@@ -8,7 +8,7 @@ export type Matrix = [a: number, b: number, c: number, d: number, e: number, f: 
 export type Shape = {
   id: string;
   type: ShapeType;
-  points: Point[]; // freehand: every sample; line/arrow/rect/ellipse: [start, end]
+  points: Point[]; // freehand: every sample; line/arrow/rect/ellipse: [start, end]; fill: closed contour
   color: string;
   size: number;
   simulatePressure?: boolean; // true for mouse/touch strokes (no real pressure data)
@@ -20,7 +20,7 @@ export type Box = { x: number; y: number; w: number; h: number };
 export type History = { past: Shape[][]; present: Shape[]; future: Shape[][] };
 
 const HISTORY_LIMIT = 100;
-const SHAPE_TYPES = new Set<ShapeType>(["stroke", "highlight", "line", "arrow", "rect", "ellipse"]);
+const SHAPE_TYPES = new Set<ShapeType>(["stroke", "highlight", "line", "arrow", "rect", "ellipse", "fill"]);
 
 export const newId = () => crypto.randomUUID();
 
@@ -79,8 +79,9 @@ export function cloneShapes(shapes: Shape[], offset: number): Shape[] {
 
 export const HIGHLIGHT_SCALE = 4;
 
-/** Rendered ink thickness: perfect-freehand `size` is a diameter, pen draws at 2x and highlighter at 4x the UI size. */
-export const inkWidth = (s: Shape) => s.size * (s.type === "highlight" ? HIGHLIGHT_SCALE : s.type === "stroke" ? 2 : 1);
+/** Rendered ink thickness: perfect-freehand `size` is a diameter, pen draws at 2x and highlighter at 4x the UI size. Fills have a 1px seam stroke. */
+export const inkWidth = (s: Shape) =>
+  s.type === "fill" ? 1 : s.size * (s.type === "highlight" ? HIGHLIGHT_SCALE : s.type === "stroke" ? 2 : 1);
 
 const KAPPA = 0.5523; // cubic Bézier circle approximation
 

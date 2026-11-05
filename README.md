@@ -12,6 +12,8 @@ npm test        # model unit tests (node --test)
 - Pressure-sensitive pen (Pointer Events, coalesced samples), mouse and touch (velocity-simulated pressure)
 - Stylus eraser end erases; touch ignored once a stylus is used (palm rejection)
 - Tools: select (click / shift-click / marquee, drag to move), pen, highlighter, eraser, line, arrow, rectangle, ellipse
+- Fill tool: click inside any closed area (even one made of separate lines); bridges gaps up to ~12px,
+  click an existing fill to recolor it. Fills sit under ink and can be selected / transformed like shapes
 - Shift while drawing: square / circle, 45° lines
 - Selection handles: resize (Shift uniform, Alt from center), rotate knob (Shift snaps 15°),
   skew edges (hold Ctrl/⌘ or toggle skew mode); flip, rotate 90°, bring to front / send to back
@@ -20,10 +22,11 @@ npm test        # model unit tests (node --test)
 - Grid / dots / blank background; color + size apply to the current selection
 
 ## Shortcuts
-V P H E L A R O tools · Ctrl/⌘ Z, Shift+Z / Y, C, X, V, A, S · Del delete · Esc deselect
+V P H E F L A R O tools · Ctrl/⌘ Z, Shift+Z / Y, C, X, V, A, S · Del delete · Esc deselect
 Shift+H / Shift+V flip · ] front · [ back
 
 ## Layout
 - `lib/board.ts` pure model: shapes (local points + affine matrix), geometry, handle math, history, file validation (tested in `lib/board.test.ts`)
+- `lib/fill.ts` raster flood fill -> vector contour (dilate, flood, trace, simplify; tested in `lib/fill.test.ts`)
 - `lib/store.ts` zustand store, `lib/files.ts` save/open/export/autosave
 - `components/board.tsx` SVG surface + pointer gestures, `components/shape-view.tsx` shape rendering, `components/toolbar.tsx` UI + shortcuts

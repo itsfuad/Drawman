@@ -42,6 +42,8 @@ function geometry(s: Shape, pts: Point[], paint: Paint) {
     }
     case "rect":
       return <polygon points={pts.map(xy).join(" ")} {...p} />;
+    case "fill": // filled with its own paint: the colour when visible, transparent as a hit area
+      return <polygon points={pts.map(xy).join(" ")} {...p} fill={paint.stroke} />;
     case "ellipse": {
       const [start, ...rest] = pts.map(xy);
       const curves = [0, 3, 6, 9].map((i) => `C${rest[i]} ${rest[i + 1]} ${rest[i + 2]}`).join(" ");
@@ -51,7 +53,7 @@ function geometry(s: Shape, pts: Point[], paint: Paint) {
 }
 
 function visible(s: Shape, pts: Point[]) {
-  if (s.type !== "stroke" && s.type !== "highlight") return geometry(s, pts, { stroke: s.color, strokeWidth: s.size });
+  if (s.type !== "stroke" && s.type !== "highlight") return geometry(s, pts, { stroke: s.color, strokeWidth: inkWidth(s) });
   const hl = s.type === "highlight";
   const outline = getStroke(pts, {
     size: s.size * (hl ? HIGHLIGHT_SCALE : 2),
@@ -66,10 +68,11 @@ function visible(s: Shape, pts: Point[]) {
 
 export const ShapeView = memo(function ShapeView({ shape, hidden }: { shape: Shape; hidden?: boolean }) {
   const pts = worldPoints(shape);
+  const fill = shape.type === "fill";
   return (
-    <g data-id={shape.id} opacity={hidden ? 0.2 : undefined}>
+    <g data-id={shape.id} data-fill={fill || undefined} opacity={hidden ? 0.2 : undefined}>
       {visible(shape, pts)}
-      {geometry(shape, pts, { stroke: "transparent", strokeWidth: Math.max(inkWidth(shape), 14) })}
+      {geometry(shape, pts, { stroke: "transparent", strokeWidth: fill ? 1 : Math.max(inkWidth(shape), 14) })}
     </g>
   );
 });

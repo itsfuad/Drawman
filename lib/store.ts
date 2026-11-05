@@ -4,8 +4,10 @@ import {
   type History, type Matrix, type Shape,
 } from "./board";
 
-export type Tool = "select" | "pen" | "highlight" | "eraser" | "line" | "arrow" | "rect" | "ellipse";
+export type Tool = "select" | "pen" | "highlight" | "eraser" | "fill" | "line" | "arrow" | "rect" | "ellipse";
 export type Background = "blank" | "grid" | "dots";
+
+type Style = { color?: string; size?: number };
 
 type State = History & {
   selected: Set<string>;
@@ -18,7 +20,8 @@ type State = History & {
   setTool: (tool: Tool) => void;
   setBackground: (b: Background) => void;
   /** Applies to the current selection too, so restyling selected shapes is one step. */
-  setStyle: (style: { color?: string; size?: number }) => void;
+  setStyle: (style: Style) => void;
+  restyle: (ids: Set<string>, style: Style) => void;
   select: (ids: Iterable<string>) => void;
   add: (shape: Shape) => void;
   remove: (ids: Set<string>) => void;
@@ -67,9 +70,10 @@ export const useBoard = create<State>()((set, get) => {
     setBackground: (background) => set({ background }),
     setStyle: (style) => {
       set(style);
-      const { selected, present } = get();
-      if (selected.size) apply(present.map((s) => (selected.has(s.id) ? { ...s, ...style } : s)));
+      const { selected } = get();
+      if (selected.size) get().restyle(selected, style);
     },
+    restyle: (ids, style) => apply(get().present.map((s) => (ids.has(s.id) ? { ...s, ...style } : s))),
     select: (ids) => set({ selected: new Set(ids) }),
     add: (shape) => apply([...get().present, shape]),
     remove: (ids) => {

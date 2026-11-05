@@ -3,7 +3,7 @@
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import {
   ArrowUpRight, BringToFront, Circle, ClipboardPaste, Copy, Delete, Download, Eraser, FlipHorizontal2, FlipVertical2,
-  FolderOpen, Grid3x3, Highlighter, ImageDown, Italic, Minus, MousePointer2, PenLine, Redo2, RotateCcw, RotateCw,
+  FolderOpen, Grid3x3, Highlighter, ImageDown, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw, RotateCw,
   Scissors, SendToBack, Square, Trash2, Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ const TOOLS: { tool: Tool; key: string; label: string; icon: ReactNode }[] = [
   { tool: "pen", key: "p", label: "Pen", icon: <PenLine /> },
   { tool: "highlight", key: "h", label: "Highlighter", icon: <Highlighter /> },
   { tool: "eraser", key: "e", label: "Eraser", icon: <Eraser /> },
+  { tool: "fill", key: "f", label: "Fill closed area", icon: <PaintBucket /> },
   { tool: "line", key: "l", label: "Line", icon: <Minus /> },
   { tool: "arrow", key: "a", label: "Arrow", icon: <ArrowUpRight /> },
   { tool: "rect", key: "r", label: "Rectangle", icon: <Square /> },

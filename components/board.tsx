@@ -5,7 +5,8 @@ import {
   bounds, boxFromPoints, constrain, contains, handleMatrix, intersects, newId, pick, transformBox, translation,
   type Box, type Handle, type Matrix, type Point, type Shape,
 } from "@/lib/board";
-import { persistBoard } from "@/lib/files";
+import { fillRegion } from "@/lib/fill";
+import { inkMask, persistBoard } from "@/lib/files";
 import { useBoard } from "@/lib/store";
 import { ShapeView } from "./shape-view";
 
@@ -54,6 +55,7 @@ export function Board() {
   const svgRef = useRef<SVGSVGElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const penSeen = useRef(false);
+  const filling = useRef(false); // a fill is being computed; ignore further fill clicks until it lands
   const pointer = useRef<number | null>(null); // the one pointer driving the gesture; others (palm, 2nd finger) are ignored
   const [draft, setDraft] = useState<Shape | null>(null);
   const [live, setLive] = useState<Matrix | null>(null); // in-progress transform of the selection
@@ -81,13 +83,33 @@ export function Board() {
     else if (e.pointerType === "touch" && penSeen.current) return; // palm rejection once a stylus is in use
     const eraserTip = (e.buttons & PEN_ERASER_BUTTONS) !== 0;
     if (e.button !== 0 && !eraserTip) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    pointer.current = e.pointerId;
-
     const p = toPoint(e);
     const [x, y] = p;
     const s = useBoard.getState();
     const active = eraserTip ? "eraser" : s.tool;
+
+    if (active === "fill") {
+      // One-shot click, no gesture: recolor a fill under the pointer, else flood the closed area.
+      const fillId = (e.target as Element).closest("[data-fill]")?.getAttribute("data-id");
+      if (fillId) s.restyle(new Set([fillId]), { color: s.color });
+      else if (!filling.current) {
+        filling.current = true;
+        inkMask()
+          .then((mask) => {
+            const contour = mask && fillRegion(mask, x, y);
+            if (contour) {
+              const { color, add } = useBoard.getState();
+              add({ id: newId(), type: "fill", points: contour.map(([px, py]): Point => [px, py, 0.5]), color, size: 1 });
+            }
+          })
+          .catch((err) => console.error("Fill failed", err))
+          .finally(() => (filling.current = false));
+      }
+      return;
+    }
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointer.current = e.pointerId;
 
     if (active === "eraser") {
       const id = idAt(e.clientX, e.clientY);
@@ -185,6 +207,7 @@ export function Board() {
   }
 
   const selBox = bounds(pick(shapes, selected));
+  const layered = [...shapes.filter((s) => s.type === "fill"), ...shapes.filter((s) => s.type !== "fill")]; // fills under ink
   const frame = selBox && (live ? transformBox(padBox(selBox, FRAME_PAD), live) : padBox(selBox, FRAME_PAD));
   const liveTransform = live ? `matrix(${live.join(" ")})` : undefined;
 
@@ -210,10 +233,10 @@ export function Board() {
           <circle cx="12" cy="12" r="1.2" fill="#d4d4d8" />
         </pattern>
       </defs>
-      <rect width="100%" height="100%" fill="#ffffff" />
-      {background !== "blank" && <rect width="100%" height="100%" fill={`url(#bg-${background})`} />}
+      <rect data-bg width="100%" height="100%" fill="#ffffff" />
+      {background !== "blank" && <rect data-bg width="100%" height="100%" fill={`url(#bg-${background})`} />}
 
-      {shapes.map((s) =>
+      {layered.map((s) =>
         // Cheap live preview: wrap in the matrix; the committed shape re-renders with true stroke widths on release.
         liveTransform && selected.has(s.id) ? (
           <g key={s.id} transform={liveTransform}>
