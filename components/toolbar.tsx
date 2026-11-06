@@ -3,14 +3,14 @@
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import {
   ArrowUpRight, BringToFront, Circle, ClipboardPaste, Copy, Delete, Download, Eraser, FlipHorizontal2, FlipVertical2,
-  FolderOpen, Grid3x3, Highlighter, ImageDown, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw, RotateCw,
-  Scissors, SendToBack, Square, Trash2, Undo2,
+  FolderOpen, Grid3x3, Group, Highlighter, ImageDown, ImagePlus, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw,
+  RotateCw, Scissors, SendToBack, Square, Trash2, Type, Undo2, Ungroup,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { exportPng, openFile, saveFile } from "@/lib/files";
+import { exportPng, insertImage, openFile, saveFile } from "@/lib/files";
 import { useBoard, type Background, type Tool } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +20,7 @@ const TOOLS: { tool: Tool; key: string; label: string; icon: ReactNode }[] = [
   { tool: "highlight", key: "h", label: "Highlighter", icon: <Highlighter /> },
   { tool: "eraser", key: "e", label: "Eraser", icon: <Eraser /> },
   { tool: "fill", key: "f", label: "Fill closed area", icon: <PaintBucket /> },
+  { tool: "text", key: "t", label: "Text", icon: <Type /> },
   { tool: "line", key: "l", label: "Line", icon: <Minus /> },
   { tool: "arrow", key: "a", label: "Arrow", icon: <ArrowUpRight /> },
   { tool: "rect", key: "r", label: "Rectangle", icon: <Square /> },
@@ -58,6 +59,31 @@ function Bar({ className, children }: { className?: string; children: ReactNode 
   );
 }
 
+/** Toolbar button that opens a file picker. */
+function PickFile({ label, accept, icon, onPick }: { label: string; accept: string; icon: ReactNode; onPick: (f: File) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <Tip label={label}>
+        <Button size="icon" variant="ghost" aria-label={label} onClick={() => input.current?.click()}>
+          {icon}
+        </Button>
+      </Tip>
+      <input
+        ref={input}
+        type="file"
+        accept={accept}
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPick(file);
+          e.target.value = ""; // allow picking the same file again
+        }}
+      />
+    </>
+  );
+}
+
 function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -70,8 +96,8 @@ function useShortcuts() {
           y: s.redo,
           c: s.copy,
           x: s.cut,
-          v: s.paste,
           s: saveFile,
+          g: e.shiftKey ? s.ungroupSelected : s.groupSelected,
           a: () => {
             s.setTool("select");
             s.select(s.present.map((sh) => sh.id));
@@ -98,15 +124,26 @@ function useShortcuts() {
         if (t) s.setTool(t.tool);
       }
     };
+    // Ctrl/⌘+V lands here (not in onKey) so an image on the system clipboard can win over the board clipboard.
+    const onPaste = (e: ClipboardEvent) => {
+      if ((e.target as HTMLElement).closest?.("input, textarea, [contenteditable]")) return;
+      e.preventDefault();
+      const image = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith("image/"));
+      if (image) insertImage(image);
+      else useBoard.getState().paste();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("paste", onPaste);
+    };
   }, []);
 }
 
 export function Toolbar() {
   useShortcuts();
   const s = useBoard();
-  const fileInput = useRef<HTMLInputElement>(null);
   const hasSelection = s.selected.size > 0;
 
   return (
@@ -228,6 +265,23 @@ export function Toolbar() {
               <SendToBack />
             </Button>
           </Tip>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <Tip label="Group" kbd={mod("G")}>
+            <Button size="icon" variant="ghost" aria-label="Group" disabled={s.selected.size < 2} onClick={s.groupSelected}>
+              <Group />
+            </Button>
+          </Tip>
+          <Tip label="Ungroup" kbd={mod("Shift+G")}>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Ungroup"
+              disabled={!s.present.some((sh) => sh.group && s.selected.has(sh.id))}
+              onClick={s.ungroupSelected}
+            >
+              <Ungroup />
+            </Button>
+          </Tip>
         </Bar>
       )}
 
@@ -274,11 +328,8 @@ export function Toolbar() {
             <Grid3x3 />
           </Button>
         </Tip>
-        <Tip label="Open board">
-          <Button size="icon" variant="ghost" aria-label="Open board" onClick={() => fileInput.current?.click()}>
-            <FolderOpen />
-          </Button>
-        </Tip>
+        <PickFile label="Open board" accept=".drawman,.json,application/json" onPick={openFile} icon={<FolderOpen />} />
+        <PickFile label="Add image (or paste / drop)" accept="image/*" onPick={(f) => insertImage(f)} icon={<ImagePlus />} />
         <Tip label="Save board" kbd={mod("S")}>
           <Button size="icon" variant="ghost" aria-label="Save board" onClick={saveFile}>
             <Download />
@@ -294,17 +345,6 @@ export function Toolbar() {
             <Trash2 />
           </Button>
         </Tip>
-        <input
-          ref={fileInput}
-          type="file"
-          accept="application/json,.json"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) openFile(file);
-            e.target.value = ""; // allow re-opening the same file
-          }}
-        />
       </Bar>
     </>
   );

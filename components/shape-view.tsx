@@ -1,6 +1,8 @@
 import { memo } from "react";
 import { getStroke } from "perfect-freehand";
-import { HIGHLIGHT_SCALE, inkWidth, worldPoints, type Point, type Shape } from "@/lib/board";
+import {
+  firstBaseline, fontSize, HIGHLIGHT_SCALE, inkWidth, LINE_HEIGHT, TEXT_FONT, worldPoints, type Matrix, type Point, type Shape,
+} from "@/lib/board";
 
 // From the perfect-freehand README: outline polygon -> smooth SVG path.
 function outlineToPath(points: number[][]): string {
@@ -19,6 +21,8 @@ function outlineToPath(points: number[][]): string {
 }
 
 type Paint = { stroke: string; strokeWidth: number };
+
+export const svgMatrix = (m?: Matrix) => m && `matrix(${m.join(" ")})`;
 
 const xy = ([x, y]: Point) => `${x},${y}`;
 
@@ -43,6 +47,8 @@ function geometry(s: Shape, pts: Point[], paint: Paint) {
     case "rect":
       return <polygon points={pts.map(xy).join(" ")} {...p} />;
     case "fill": // filled with its own paint: the colour when visible, transparent as a hit area
+    case "text": // text and image: only drawn as the hit box; content comes from visible()
+    case "image":
       return <polygon points={pts.map(xy).join(" ")} {...p} fill={paint.stroke} />;
     case "ellipse": {
       const [start, ...rest] = pts.map(xy);
@@ -53,6 +59,41 @@ function geometry(s: Shape, pts: Point[], paint: Paint) {
 }
 
 function visible(s: Shape, pts: Point[]) {
+  if (s.type === "image") {
+    const [[x1, y1], [x2, y2]] = s.points;
+    return (
+      <image
+        href={s.src}
+        x={Math.min(x1, x2)}
+        y={Math.min(y1, y2)}
+        width={Math.abs(x2 - x1)}
+        height={Math.abs(y2 - y1)}
+        preserveAspectRatio="none"
+        transform={svgMatrix(s.matrix)}
+      />
+    );
+  }
+  if (s.type === "text") {
+    // Glyphs can't be built from world points, so text takes its matrix as an SVG transform.
+    const size = fontSize(s.size);
+    const [[x, y]] = s.points;
+    const base = firstBaseline(size);
+    return (
+      <text
+        transform={svgMatrix(s.matrix)}
+        fill={s.color}
+        fontSize={size}
+        fontFamily={TEXT_FONT}
+        style={{ whiteSpace: "pre" }}
+      >
+        {(s.text ?? "").split("\n").map((line, i) => (
+          <tspan key={i} x={x} y={y + base + i * size * LINE_HEIGHT}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    );
+  }
   if (s.type !== "stroke" && s.type !== "highlight") return geometry(s, pts, { stroke: s.color, strokeWidth: inkWidth(s) });
   const hl = s.type === "highlight";
   const outline = getStroke(pts, {
@@ -69,10 +110,11 @@ function visible(s: Shape, pts: Point[]) {
 export const ShapeView = memo(function ShapeView({ shape, hidden }: { shape: Shape; hidden?: boolean }) {
   const pts = worldPoints(shape);
   const fill = shape.type === "fill";
+  const solid = fill || shape.type === "text" || shape.type === "image"; // hit area is the filled box, not a fat outline
   return (
     <g data-id={shape.id} data-fill={fill || undefined} opacity={hidden ? 0.2 : undefined}>
       {visible(shape, pts)}
-      {geometry(shape, pts, { stroke: "transparent", strokeWidth: fill ? 1 : Math.max(inkWidth(shape), 14) })}
+      {geometry(shape, pts, { stroke: "transparent", strokeWidth: solid ? 1 : Math.max(inkWidth(shape), 14) })}
     </g>
   );
 });

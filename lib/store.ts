@@ -1,13 +1,15 @@
 import { create } from "zustand";
 import {
-  bounds, cloneShapes, commit, IDENTITY, pick, redo, rotateAbout, scaleAbout, transformShapes, undo,
+  bounds, cloneShapes, commit, expandGroups, groupShapes, IDENTITY, insertFill, newId, pick, redo, rotateAbout,
+  scaleAbout, transformShapes, undo, ungroupShapes,
   type History, type Matrix, type Shape,
 } from "./board";
 
-export type Tool = "select" | "pen" | "highlight" | "eraser" | "fill" | "line" | "arrow" | "rect" | "ellipse";
+export type Tool = "select" | "pen" | "highlight" | "eraser" | "fill" | "text" | "line" | "arrow" | "rect" | "ellipse";
 export type Background = "blank" | "grid" | "dots";
 
 type Style = { color?: string; size?: number };
+type Patch = Style & { text?: string };
 
 type State = History & {
   selected: Set<string>;
@@ -21,7 +23,7 @@ type State = History & {
   setBackground: (b: Background) => void;
   /** Applies to the current selection too, so restyling selected shapes is one step. */
   setStyle: (style: Style) => void;
-  restyle: (ids: Set<string>, style: Style) => void;
+  update: (ids: Set<string>, patch: Patch) => void;
   select: (ids: Iterable<string>) => void;
   add: (shape: Shape) => void;
   remove: (ids: Set<string>) => void;
@@ -29,6 +31,8 @@ type State = History & {
   flipSelected: (axis: "x" | "y") => void;
   rotateSelected: (degrees: number) => void;
   reorderSelected: (to: "front" | "back") => void;
+  groupSelected: () => void;
+  ungroupSelected: () => void;
   toggleSkewMode: () => void;
   load: (shapes: Shape[], recordHistory: boolean) => void;
   undo: () => void;
@@ -71,11 +75,11 @@ export const useBoard = create<State>()((set, get) => {
     setStyle: (style) => {
       set(style);
       const { selected } = get();
-      if (selected.size) get().restyle(selected, style);
+      if (selected.size) get().update(selected, style);
     },
-    restyle: (ids, style) => apply(get().present.map((s) => (ids.has(s.id) ? { ...s, ...style } : s))),
-    select: (ids) => set({ selected: new Set(ids) }),
-    add: (shape) => apply([...get().present, shape]),
+    update: (ids, patch) => apply(get().present.map((s) => (ids.has(s.id) ? { ...s, ...patch } : s))),
+    select: (ids) => set({ selected: expandGroups(get().present, new Set(ids)) }),
+    add: (shape) => apply(shape.type === "fill" ? insertFill(get().present, shape) : [...get().present, shape]),
     remove: (ids) => {
       if (ids.size) apply(get().present.filter((s) => !ids.has(s.id)), new Set());
     },
@@ -99,6 +103,14 @@ export const useBoard = create<State>()((set, get) => {
       const moved = pick(present, selected);
       const rest = present.filter((s) => !selected.has(s.id));
       apply(to === "front" ? [...rest, ...moved] : [...moved, ...rest]);
+    },
+    groupSelected: () => {
+      const { present, selected } = get();
+      if (selected.size > 1) apply(groupShapes(present, selected, newId()));
+    },
+    ungroupSelected: () => {
+      const { present, selected } = get();
+      if (pick(present, selected).some((s) => s.group)) apply(ungroupShapes(present, selected));
     },
     toggleSkewMode: () => set({ skewMode: !get().skewMode }),
     load: (shapes, recordHistory) =>
