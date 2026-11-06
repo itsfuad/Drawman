@@ -1,4 +1,4 @@
-import { decodeFile, encodeFile, newId, parseBoard, serializeBoard, type Shape } from "./board";
+import { applyMatrix, decodeFile, encodeFile, invert, isView, newId, parseBoard, serializeBoard, type Shape } from "./board";
 import type { Mask } from "./fill";
 import { useBoard } from "./store";
 
@@ -27,7 +27,7 @@ const boardSvg = () => document.querySelector<SVGSVGElement>("svg[data-board]");
 
 const MAX_IMAGE_SIDE = 1600; // keeps a photo to a few hundred KB so autosave and files stay small
 
-/** Adds an image file (re-encoded, downscaled) fitted into the board, centred on `at` or the board centre. */
+/** Adds an image file (re-encoded, downscaled) fitted into the view, centred on world point `at` or the view centre. */
 export async function insertImage(file: Blob, at?: { x: number; y: number }) {
   try {
     if (!file.type.startsWith("image/")) throw new Error("not an image");
@@ -39,9 +39,10 @@ export async function insertImage(file: Blob, at?: { x: number; y: number }) {
     bitmap.close();
     const src = canvas.toDataURL("image/webp", 0.85); // browsers without webp encoding return PNG
     const r = boardSvg()!.getBoundingClientRect();
-    const fit = Math.min(1, (r.width * 0.6) / w, (r.height * 0.6) / h);
+    const { view } = useBoard.getState();
+    const fit = Math.min(1, (r.width * 0.6) / view[0] / w, (r.height * 0.6) / view[0] / h);
     const [dw, dh] = [w * fit, h * fit];
-    const { x, y } = at ?? { x: r.width / 2, y: r.height / 2 };
+    const [x, y] = at ? [at.x, at.y] : applyMatrix(invert(view), r.width / 2, r.height / 2);
     const shape: Shape = {
       id: newId(),
       type: "image",
@@ -90,8 +91,8 @@ export async function exportPng() {
 const INK_ALPHA = 128; // highlighter (35% opacity) stays see-through for fills; pen ink is a wall
 
 /**
- * Ink mask of everything except background, UI and existing fills, at 1px = 1 board unit.
- * shortcut: assumes board units == CSS pixels; needs the view transform once pan/zoom exists.
+ * Ink mask of the visible board (minus background, UI and existing fills) in screen pixels; callers map results through the view.
+ * shortcut: only what is on screen is rasterized, so an area partly off screen counts as open; rasterize the world if that bites.
  */
 export async function inkMask(): Promise<Mask | null> {
   const svg = boardSvg();
@@ -104,6 +105,7 @@ export async function inkMask(): Promise<Mask | null> {
 }
 
 const STORAGE_KEY = "drawman:board";
+const VIEW_KEY = "drawman:view"; // separate from the board: the camera is per device, not part of saved files
 let autosaveWarned = false;
 
 /** Restores the last session, then autosaves every committed change. Returns the unsubscribe fn. */
@@ -111,10 +113,19 @@ export function persistBoard() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) useBoard.getState().load(parseBoard(JSON.parse(saved)), false);
+    const view = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null");
+    if (isView(view)) useBoard.getState().setView(view);
   } catch {
     // Corrupt or blocked storage: start with an empty board.
   }
   return useBoard.subscribe((s, prev) => {
+    if (s.view !== prev.view) {
+      try {
+        localStorage.setItem(VIEW_KEY, JSON.stringify(s.view));
+      } catch {
+        // Losing the camera position is harmless.
+      }
+    }
     if (s.present === prev.present) return;
     try {
       localStorage.setItem(STORAGE_KEY, serializeBoard(s.present));

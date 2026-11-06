@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  applyMatrix, bounds, cloneShapes, commit, constrain, decodeFile, encodeFile, expandGroups, fontSize, groupShapes, handleMatrix, IDENTITY,
+  applyMatrix, bounds, cloneShapes, commit, constrain, decodeFile, encodeFile, expandGroups, fitView, fontSize, groupShapes, handleMatrix, IDENTITY,
+  clampView, invert, isView, MAX_ZOOM, MIN_ZOOM, zoomAt,
   insertFill, LINE_HEIGHT, multiply, parseBoard, redo, rotateAbout, scaleAbout, serializeBoard, transformShapes,
   translation, undo, ungroupShapes, worldPoints, type History, type Matrix, type Shape,
 } from "./board.ts";
@@ -160,4 +161,31 @@ test("image src must be inline raster data", () => {
   assert.throws(() => parseBoard(img("https://example.com/track.png")), /Invalid shape/, "remote URL");
   assert.throws(() => parseBoard(img("data:image/svg+xml;base64,PHN2Zz4=")), /Invalid shape/, "svg can carry script");
   assert.throws(() => parseBoard(img("data:image/png;base64,abc\" onload=\"x")), /Invalid shape/, "attribute injection");
+});
+
+test("view: invert, zoomAt keeps the anchor, clamps, fitView centres", () => {
+  const m: Matrix = multiply(translation(30, -7), scaleAbout(2, 2, 5, 9));
+  const [x, y] = applyMatrix(invert(m), ...applyMatrix(m, 11, 13));
+  assert.ok(Math.abs(x - 11) < 1e-9 && Math.abs(y - 13) < 1e-9, "round trip");
+
+  const v = zoomAt(IDENTITY, 2, 100, 50);
+  assert.deepEqual(applyMatrix(v, 100, 50), [100, 50], "anchor stays under the cursor");
+  assert.equal(v[0], 2);
+  assert.equal(zoomAt(v, 1000, 0, 0)[0], MAX_ZOOM);
+  assert.equal(zoomAt(v, 1e-6, 0, 0)[0], MIN_ZOOM);
+
+  const f = fitView({ x: 1000, y: 1000, w: 10, h: 0 }, 800, 600);
+  assert.equal(f[0], 1, "never zooms in past 100%");
+  assert.deepEqual(applyMatrix(f, 1005, 1000), [400, 300]);
+  assert.ok(isView(f) && !isView([NaN, 0, 0, 1, 0, 0]) && !isView([0, 0, 0, 0, 0, 0]));
+});
+
+test("clampView: screen centre stays over content + home screen", () => {
+  const far = translation(-5000, 0); // centre at world x=5400, far right of an empty board
+  const c = clampView(far, null, 800, 600);
+  assert.deepEqual(applyMatrix(invert(c), 400, 300), [800, 300], "pulled back to the home screen edge");
+  const grown = clampView(far, { x: 0, y: 0, w: 6000, h: 10 }, 800, 600);
+  assert.equal(grown, far, "content out there extends the area");
+  const zoomed = clampView([2, 0, 0, 2, -20000, 0], null, 800, 600);
+  assert.deepEqual(applyMatrix(invert(zoomed), 400, 300), [800, 150], "clamp works in world units at any zoom");
 });
