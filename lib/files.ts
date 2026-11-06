@@ -65,6 +65,9 @@ function rasterize(svg: SVGSVGElement, strip: string, scale: number): Promise<Ca
   const { width, height } = svg.getBoundingClientRect();
   const clone = svg.cloneNode(true) as SVGSVGElement;
   clone.querySelectorAll(strip).forEach((n) => n.remove());
+  // The <img> render has no page stylesheet: pin the theme colours (CSS vars + ink) the board is drawn with.
+  const css = getComputedStyle(svg);
+  for (const p of ["color", "--background", "--board-grid", "--board-dots"]) clone.style.setProperty(p, css.getPropertyValue(p));
   clone.setAttribute("width", String(width));
   clone.setAttribute("height", String(height));
   return new Promise((resolve, reject) => {
