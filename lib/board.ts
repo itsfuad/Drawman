@@ -104,6 +104,10 @@ export const inkWidth = (s: Shape) =>
 // System fonts only: PNG export and the fill mask draw the SVG through an <img>, which cannot load page web fonts.
 export const TEXT_FONT = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 export const LINE_HEIGHT = 1.25;
+/** Default ink: stored as this hex (files stay theme-free) but drawn in the theme's foreground, so it shows on any board. */
+export const INK = "#18181b";
+export const paint = (color: string) => (color === INK ? "currentColor" : color);
+
 export const fontSize = (size: number) => 12 + size * 2; // UI sizes 2/4/8/16 -> 16/20/28/44 px
 
 let measurer: CanvasRenderingContext2D | null | undefined;

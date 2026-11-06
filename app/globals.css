@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -49,8 +49,11 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  color-scheme: light;
+  --background: oklch(0.985 0.002 95); /* off-white paper, not pure white */
+  --foreground: oklch(0.21 0.006 286); /* = #18181b, the default ink */
+  --board-grid: oklch(0.915 0.004 95);
+  --board-dots: oklch(0.85 0.004 95);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
@@ -84,11 +87,14 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  color-scheme: dark;
+  --background: oklch(0.2 0.004 286); /* off-black slate, not pure black */
+  --foreground: oklch(0.93 0.003 286); /* default ink on a dark board */
+  --board-grid: oklch(0.26 0.004 286);
+  --board-dots: oklch(0.34 0.004 286);
+  --card: oklch(0.245 0.004 286);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
+  --popover: oklch(0.245 0.004 286);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.922 0 0);
   --primary-foreground: oklch(0.205 0 0);

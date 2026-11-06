@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { getStroke } from "perfect-freehand";
 import {
-  firstBaseline, fontSize, HIGHLIGHT_SCALE, inkWidth, LINE_HEIGHT, TEXT_FONT, worldPoints, type Matrix, type Point, type Shape,
+  firstBaseline, fontSize, HIGHLIGHT_SCALE, inkWidth, LINE_HEIGHT, paint, TEXT_FONT, worldPoints, type Matrix, type Point, type Shape,
 } from "@/lib/board";
 
 // From the perfect-freehand README: outline polygon -> smooth SVG path.
@@ -81,7 +81,7 @@ function visible(s: Shape, pts: Point[]) {
     return (
       <text
         transform={svgMatrix(s.matrix)}
-        fill={s.color}
+        fill={paint(s.color)}
         fontSize={size}
         fontFamily={TEXT_FONT}
         style={{ whiteSpace: "pre" }}
@@ -94,7 +94,7 @@ function visible(s: Shape, pts: Point[]) {
       </text>
     );
   }
-  if (s.type !== "stroke" && s.type !== "highlight") return geometry(s, pts, { stroke: s.color, strokeWidth: inkWidth(s) });
+  if (s.type !== "stroke" && s.type !== "highlight") return geometry(s, pts, { stroke: paint(s.color), strokeWidth: inkWidth(s) });
   const hl = s.type === "highlight";
   const outline = getStroke(pts, {
     size: s.size * (hl ? HIGHLIGHT_SCALE : 2),
@@ -104,7 +104,7 @@ function visible(s: Shape, pts: Point[]) {
     simulatePressure: !hl && !!s.simulatePressure,
     last: true,
   });
-  return <path d={outlineToPath(outline)} fill={s.color} opacity={hl ? 0.35 : 1} />;
+  return <path d={outlineToPath(outline)} fill={paint(s.color)} opacity={hl ? 0.35 : 1} />;
 }
 
 export const ShapeView = memo(function ShapeView({ shape, hidden }: { shape: Shape; hidden?: boolean }) {

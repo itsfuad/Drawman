@@ -3,15 +3,16 @@
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import {
   ArrowUpRight, BringToFront, Circle, ClipboardPaste, Copy, Delete, Download, Eraser, FlipHorizontal2, FlipVertical2,
-  FolderOpen, Grid3x3, Group, Hand, Highlighter, ImageDown, ImagePlus, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw,
+  FolderOpen, Grid3x3, SunMoon, Group, Hand, Highlighter, ImageDown, ImagePlus, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw,
   RotateCw, Scan, Scissors, SendToBack, Square, Trash2, Type, Undo2, Ungroup, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { bounds, fitView, IDENTITY, zoomAt } from "@/lib/board";
+import { bounds, fitView, IDENTITY, INK, paint, zoomAt } from "@/lib/board";
 import { exportPng, insertImage, openFile, saveFile } from "@/lib/files";
+import { toggleTheme } from "@/lib/theme";
 import { useShallow } from "zustand/react/shallow";
 import { useBoard, type Background, type Tool } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -30,7 +31,7 @@ const TOOLS: { tool: Tool; key: string; label: string; icon: ReactNode }[] = [
   { tool: "ellipse", key: "o", label: "Ellipse", icon: <Circle /> },
 ];
 
-const COLORS = ["#18181b", "#71717a", "#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#2563eb", "#7c3aed"];
+const COLORS = [INK, "#71717a", "#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#2563eb", "#7c3aed"];
 const SIZES = [2, 4, 8, 16];
 const BACKGROUNDS: Background[] = ["grid", "dots", "blank"];
 
@@ -193,7 +194,7 @@ export function Toolbar() {
                 <Button size="icon" variant="ghost" aria-label="Color and size">
                   <span
                     className="rounded-full ring-1 ring-foreground/15"
-                    style={{ background: s.color, width: 6 + s.size, height: 6 + s.size, maxWidth: 18, maxHeight: 18 }}
+                    style={{ background: paint(s.color), width: 6 + s.size, height: 6 + s.size, maxWidth: 18, maxHeight: 18 }}
                   />
                 </Button>
               }
@@ -204,10 +205,10 @@ export function Toolbar() {
               {COLORS.map((c) => (
                 <button
                   key={c}
-                  aria-label={`Color ${c}`}
+                  aria-label={c === INK ? "Ink (follows theme)" : `Color ${c}`}
                   aria-pressed={s.color === c}
                   className="size-7 rounded-full outline-offset-2 transition hover:scale-110 focus-visible:outline-2 focus-visible:outline-ring aria-pressed:outline-2 aria-pressed:outline-foreground"
-                  style={{ background: c }}
+                  style={{ background: paint(c) }}
                   onClick={() => s.setStyle({ color: c })}
                 />
               ))}
@@ -370,6 +371,11 @@ export function Toolbar() {
             onClick={() => s.setBackground(BACKGROUNDS[(BACKGROUNDS.indexOf(s.background) + 1) % BACKGROUNDS.length])}
           >
             <Grid3x3 />
+          </Button>
+        </Tip>
+        <Tip label="Light / dark theme">
+          <Button size="icon" variant="ghost" aria-label="Toggle theme" onClick={toggleTheme}>
+            <SunMoon />
           </Button>
         </Tip>
         <PickFile label="Open board" accept=".drawman,.json,application/json" onPick={openFile} icon={<FolderOpen />} />

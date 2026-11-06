@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import {
-  bounds, clampView, cloneShapes, commit, expandGroups, groupShapes, IDENTITY, insertFill, newId, pick, redo, rotateAbout,
+  bounds, clampView, cloneShapes, commit, INK, expandGroups, groupShapes, IDENTITY, insertFill, newId, pick, redo, rotateAbout,
   scaleAbout, transformShapes, undo, ungroupShapes,
   type History, type Matrix, type Shape,
 } from "./board";
@@ -67,7 +67,7 @@ export const useBoard = create<State>()((set, get) => {
     selected: new Set(),
     clipboard: [],
     tool: "pen",
-    color: "#18181b",
+    color: INK,
     size: 4,
     background: "grid",
     skewMode: false,

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import {
   applyMatrix, bounds, boxFromPoints, constrain, contains, expandGroups, fontSize, handleMatrix, IDENTITY, intersects, invert,
-  LINE_HEIGHT, multiply, newId, pick, TEXT_FONT, textBox, transformBox, translation, zoomAt,
+  LINE_HEIGHT, multiply, newId, paint, pick, TEXT_FONT, textBox, transformBox, translation, zoomAt,
   type Box, type Handle, type Matrix, type Point, type Shape,
 } from "@/lib/board";
 import { fillRegion } from "@/lib/fill";
@@ -363,7 +363,7 @@ export function Board() {
       ref={svgRef}
       data-board
       xmlns="http://www.w3.org/2000/svg"
-      className="absolute inset-0 size-full touch-none select-none"
+      className="absolute inset-0 size-full touch-none text-foreground select-none" // text colour = currentColor = theme ink
       style={{ cursor: panning ? "grabbing" : spaceHeld || tool === "hand" ? "grab" : tool === "select" ? "default" : "crosshair" }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -388,13 +388,13 @@ export function Board() {
       <defs>
         {/* Tiles sized in screen px (not patternTransform) so lines and dots stay 1px crisp at any zoom. */}
         <pattern id="bg-grid" x={view[4]} y={view[5]} width={grid} height={grid} patternUnits="userSpaceOnUse">
-          <path d={`M${grid} 0H0V${grid}`} fill="none" stroke="#e4e4e7" strokeWidth="1" />
+          <path d={`M${grid} 0H0V${grid}`} fill="none" style={{ stroke: "var(--board-grid)" }} strokeWidth="1" />
         </pattern>
         <pattern id="bg-dots" x={view[4] - dots / 2} y={view[5] - dots / 2} width={dots} height={dots} patternUnits="userSpaceOnUse">
-          <circle cx={dots / 2} cy={dots / 2} r="1.2" fill="#d4d4d8" />
+          <circle cx={dots / 2} cy={dots / 2} r="1.2" style={{ fill: "var(--board-dots)" }} />
         </pattern>
       </defs>
-      <rect data-bg width="100%" height="100%" fill="#ffffff" />
+      <rect data-bg width="100%" height="100%" style={{ fill: "var(--background)" }} />
       {background !== "blank" && <rect data-bg width="100%" height="100%" fill={`url(#bg-${background})`} />}
 
       <g transform={svgMatrix(view)}>
@@ -427,7 +427,7 @@ export function Board() {
                   )}
                   <circle cx={x} cy={y} r={12} fill="transparent" />
                   {h === "rotate" ? (
-                    <circle cx={x} cy={y} r={5} fill="#ffffff" stroke="#3b82f6" strokeWidth={1.5} />
+                    <circle cx={x} cy={y} r={5} style={{ fill: "var(--background)" }} stroke="#3b82f6" strokeWidth={1.5} />
                   ) : (
                     <rect
                       x={x - 4}
@@ -435,7 +435,7 @@ export function Board() {
                       width={8}
                       height={8}
                       rx={2}
-                      fill={skewMode && edge ? "#3b82f6" : "#ffffff"}
+                      style={{ fill: skewMode && edge ? "#3b82f6" : "var(--background)" }}
                       stroke="#3b82f6"
                       strokeWidth={1.5}
                       transform={skewMode && edge ? `rotate(45 ${x} ${y})` : undefined}
@@ -472,7 +472,7 @@ export function Board() {
           width: editBox.w + editSize, // room for the next character before the width re-measures
           height: editBox.h,
           font: `${editSize}px/${LINE_HEIGHT} ${TEXT_FONT}`,
-          color: editing.color,
+          color: paint(editing.color),
           whiteSpace: "pre",
         }}
       />
