@@ -6,9 +6,9 @@ import {
   newId, pick, TEXT_FONT, textBox, transformBox, translation, type Box, type Handle, type Matrix, type Point, type Shape,
 } from "@/lib/board";
 import { fillRegion } from "@/lib/fill";
-import { inkMask, persistBoard } from "@/lib/files";
+import { inkMask, insertImage, persistBoard } from "@/lib/files";
 import { useBoard } from "@/lib/store";
-import { ShapeView } from "./shape-view";
+import { ShapeView, svgMatrix } from "./shape-view";
 
 // Gesture data lives in a ref so pointerup never reads a state update React has not rendered yet.
 type Gesture =
@@ -259,7 +259,7 @@ export function Board() {
 
   const selBox = bounds(pick(shapes, selected));
   const frame = selBox && (live ? transformBox(padBox(selBox, FRAME_PAD), live) : padBox(selBox, FRAME_PAD));
-  const liveTransform = live ? `matrix(${live.join(" ")})` : undefined;
+  const liveTransform = svgMatrix(live ?? undefined);
 
   const editSize = editing ? fontSize(editing.size) : 0;
   const editBox = editing && textBox(editing.text || " ", editSize);
@@ -280,6 +280,13 @@ export function Board() {
       onContextMenu={(e) => e.preventDefault()}
       // Text tool: keep focus in the editor that pointerdown just opened (mousedown would move it to <body>).
       onMouseDown={(e) => tool === "text" && e.preventDefault()}
+      onDragOver={(e) => e.preventDefault()} // required for drop to fire
+      onDrop={(e) => {
+        e.preventDefault();
+        const r = svgRef.current!.getBoundingClientRect();
+        const at = { x: e.clientX - r.left, y: e.clientY - r.top };
+        for (const file of e.dataTransfer.files) if (file.type.startsWith("image/")) insertImage(file, at);
+      }}
       onDoubleClick={(e) => {
         const text = tool === "select" && textAt(e);
         if (text) openEditor(text);

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  applyMatrix, bounds, cloneShapes, commit, constrain, expandGroups, fontSize, groupShapes, handleMatrix, IDENTITY,
+  applyMatrix, bounds, cloneShapes, commit, constrain, decodeFile, encodeFile, expandGroups, fontSize, groupShapes, handleMatrix, IDENTITY,
   insertFill, LINE_HEIGHT, multiply, parseBoard, redo, rotateAbout, scaleAbout, serializeBoard, transformShapes,
   translation, undo, ungroupShapes, worldPoints, type History, type Matrix, type Shape,
 } from "./board.ts";
@@ -136,4 +136,28 @@ test("text: box from estimated metrics, validated on load", () => {
   assert.equal(parseBoard(JSON.parse(serializeBoard([t])))[0].text, "ab\nabcd");
   assert.throws(() => parseBoard({ version: 2, shapes: [{ ...t, text: 5 }] }));
   assert.throws(() => parseBoard({ version: 2, shapes: [{ ...t, text: "x".repeat(10_001) }] }));
+});
+
+test("compact file: gzip round trip, smaller than JSON, legacy .json still opens", async () => {
+  const stroke: Shape = {
+    id: "s", type: "stroke", color: "#000000", size: 4, simulatePressure: true,
+    points: Array.from({ length: 500 }, (_, i) => [i * 1.234567891, Math.sin(i / 7) * 80.987654321, 0.5]),
+    matrix: [0.70710678118, 0.70710678118, -0.70710678118, 0.70710678118, 12.3456789, 9.87654321],
+  };
+  const blob = await encodeFile([stroke]);
+  const legacy = JSON.stringify({ app: "drawman", version: 2, shapes: [stroke] });
+  assert.ok(blob.size * 4 < legacy.length, `compact ${blob.size}B vs json ${legacy.length}B`);
+  const [back] = await decodeFile(blob);
+  back.points.forEach((p, i) => assert.ok(Math.abs(p[0] - stroke.points[i][0]) <= 0.005 && Math.abs(p[1] - stroke.points[i][1]) <= 0.005));
+  assert.ok(Math.abs(back.matrix![0] - stroke.matrix![0]) < 1e-5);
+  assert.equal((await decodeFile(new Blob([legacy])))[0].points.length, 500, "plain JSON file");
+  await assert.rejects(decodeFile(new Blob(["not a board"])));
+});
+
+test("image src must be inline raster data", () => {
+  const img = (src: string): unknown => ({ version: 2, shapes: [{ id: "i", type: "image", points: [[0, 0, 0.5], [10, 10, 0.5]], color: "#000000", size: 1, src }] });
+  assert.equal(parseBoard(img("data:image/png;base64,iVBORw0KGgo=")).length, 1);
+  assert.throws(() => parseBoard(img("https://example.com/track.png")), /Invalid shape/, "remote URL");
+  assert.throws(() => parseBoard(img("data:image/svg+xml;base64,PHN2Zz4=")), /Invalid shape/, "svg can carry script");
+  assert.throws(() => parseBoard(img("data:image/png;base64,abc\" onload=\"x")), /Invalid shape/, "attribute injection");
 });

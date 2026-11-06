@@ -22,7 +22,10 @@ npm test        # model unit tests (node --test)
 - Selection handles: resize (Shift uniform, Alt from center), rotate knob (Shift snaps 15°),
   skew edges (hold Ctrl/⌘ or toggle skew mode); flip, rotate 90°, bring to front / send to back
 - Cut / copy / paste / delete, undo / redo (100 steps), clear (undoable)
-- Autosave to localStorage, save/open `.json` board files, export PNG
+- Images: add button, paste (Ctrl/⌘+V) or drag & drop; downscaled to 1600px and stored inline (webp).
+  Images move, resize, rotate, group and stack like any shape
+- Autosave to localStorage (warns once if storage is full), save/open compact `.drawman` files
+  (gzip, coordinates rounded to 0.01px; old `.json` boards still open), export PNG
 - Grid / dots / blank background; color + size apply to the current selection
 
 ## Shortcuts

@@ -1,6 +1,6 @@
 // Pure board model: shapes, geometry, history and file validation. No React here so it stays testable.
 
-export type ShapeType = "stroke" | "highlight" | "line" | "arrow" | "rect" | "ellipse" | "fill" | "text";
+export type ShapeType = "stroke" | "highlight" | "line" | "arrow" | "rect" | "ellipse" | "fill" | "text" | "image";
 export type Point = [x: number, y: number, pressure: number];
 /** SVG-order affine matrix: x' = a·x + c·y + e, y' = b·x + d·y + f. */
 export type Matrix = [a: number, b: number, c: number, d: number, e: number, f: number];
@@ -8,13 +8,14 @@ export type Matrix = [a: number, b: number, c: number, d: number, e: number, f: 
 export type Shape = {
   id: string;
   type: ShapeType;
-  points: Point[]; // freehand: every sample; line/arrow/rect/ellipse: [start, end]; fill: closed contour; text: [top-left]
+  points: Point[]; // freehand: samples; line/arrow/rect/ellipse/image: [start, end]; fill: closed contour; text: [top-left]
   color: string;
   size: number;
   simulatePressure?: boolean; // true for mouse/touch strokes (no real pressure data)
   matrix?: Matrix; // move/resize/rotate/skew/flip; points stay in local space
   group?: string; // shapes sharing a group id select and move as one
   text?: string; // type "text" only
+  src?: string; // type "image" only: data URL, so boards stay self-contained
 };
 
 export type Box = { x: number; y: number; w: number; h: number };
@@ -22,7 +23,10 @@ export type Box = { x: number; y: number; w: number; h: number };
 export type History = { past: Shape[][]; present: Shape[]; future: Shape[][] };
 
 const HISTORY_LIMIT = 100;
-const SHAPE_TYPES = new Set<ShapeType>(["stroke", "highlight", "line", "arrow", "rect", "ellipse", "fill", "text"]);
+const SHAPE_TYPES = new Set<ShapeType>(["stroke", "highlight", "line", "arrow", "rect", "ellipse", "fill", "text", "image"]);
+// Only inline raster data: no remote URLs (tracking, broken boards) and no script-capable SVG.
+const IMAGE_SRC = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
+const MAX_IMAGE_SRC = 20_000_000;
 const FILE_VERSION = 2;
 
 export const newId = () => crypto.randomUUID();
@@ -88,7 +92,7 @@ export const HIGHLIGHT_SCALE = 4;
 
 /** Rendered ink thickness: perfect-freehand `size` is a diameter, pen draws at 2x and highlighter at 4x the UI size. Fills have a 1px seam stroke. */
 export const inkWidth = (s: Shape) =>
-  s.type === "fill" || s.type === "text"
+  s.type === "fill" || s.type === "text" || s.type === "image"
     ? 1
     : s.size * (s.type === "highlight" ? HIGHLIGHT_SCALE : s.type === "stroke" ? 2 : 1);
 
@@ -125,13 +129,13 @@ export function textBox(text: string, size: number) {
 const KAPPA = 0.5523; // cubic Bézier circle approximation
 
 /**
- * Shape geometry as world-space points. Freehand/line/arrow: the samples. Rect and text: 4 corners.
+ * Shape geometry as world-space points. Freehand/line/arrow: the samples. Rect, image and text: 4 corners.
  * Ellipse: 13 Bézier control points (affine maps keep Béziers exact, so skew/rotate stay correct).
  */
 export function worldPoints(s: Shape): Point[] {
   const [[x1, y1], [x2, y2] = [x1, y1]] = s.points;
   let local: Point[] = s.points;
-  if (s.type === "rect") {
+  if (s.type === "rect" || s.type === "image") {
     local = [[x1, y1, 0.5], [x2, y1, 0.5], [x2, y2, 0.5], [x1, y2, 0.5]];
   } else if (s.type === "text") {
     const { w, h } = textBox(s.text ?? "", fontSize(s.size));
@@ -281,7 +285,8 @@ export function parseBoard(raw: unknown): Shape[] {
       (s.matrix === undefined ||
         (Array.isArray(s.matrix) && s.matrix.length === 6 && s.matrix.every((n: unknown) => Number.isFinite(n)))) &&
       (s.group === undefined || (typeof s.group === "string" && s.group.length <= 64)) &&
-      (s.type !== "text" || (typeof s.text === "string" && s.text.length <= 10_000));
+      (s.type !== "text" || (typeof s.text === "string" && s.text.length <= 10_000)) &&
+      (s.type !== "image" || (typeof s.src === "string" && s.src.length <= MAX_IMAGE_SRC && IMAGE_SRC.test(s.src)));
     if (!ok) throw new Error(`Invalid shape at index ${i}`);
     return {
       id: s.id,
@@ -293,6 +298,7 @@ export function parseBoard(raw: unknown): Shape[] {
       ...(s.matrix ? { matrix: s.matrix } : {}),
       ...(s.group ? { group: s.group } : {}),
       ...(s.type === "text" ? { text: s.text } : {}),
+      ...(s.type === "image" ? { src: s.src } : {}),
     };
   });
   // v1 drew every fill under all ink whatever the stored order; reorder so old boards look the same.
@@ -300,4 +306,40 @@ export function parseBoard(raw: unknown): Shape[] {
   return v1 ? [...parsed.filter((s) => s.type === "fill"), ...parsed.filter((s) => s.type !== "fill")] : parsed;
 }
 
-export const serializeBoard = (shapes: Shape[]) => JSON.stringify({ app: "drawman", version: FILE_VERSION, shapes });
+const round = (n: number, places: number) => Math.round(n * 10 ** places) / 10 ** places;
+
+/** JSON board with coordinates rounded to 0.01px (pointer samples carry ~15 noise digits); matrices keep 5 places. */
+export const serializeBoard = (shapes: Shape[]) =>
+  JSON.stringify({
+    app: "drawman",
+    version: FILE_VERSION,
+    shapes: shapes.map((s) => ({
+      ...s,
+      points: s.points.map(([x, y, p]) => [round(x, 2), round(y, 2), round(p, 3)]),
+      ...(s.matrix ? { matrix: s.matrix.map((v) => round(v, 5)) } : {}),
+    })),
+  });
+
+const MAX_BOARD_BYTES = 100_000_000; // decompressed cap: a few KB of gzip can expand to gigabytes
+
+/** Compact .drawman file: gzip of the rounded JSON board. */
+export const encodeFile = (shapes: Shape[]) =>
+  new Response(new Blob([serializeBoard(shapes)]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+
+/** Reads a .drawman (gzip) or legacy .json board. Throws on malformed, invalid or oversized input. */
+export async function decodeFile(file: Blob): Promise<Shape[]> {
+  const [b0, b1] = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  const gzipped = b0 === 0x1f && b1 === 0x8b;
+  const reader = (gzipped ? file.stream().pipeThrough(new DecompressionStream("gzip")) : file.stream()).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (let r = await reader.read(); !r.done; r = await reader.read()) {
+    total += r.value.length;
+    if (total > MAX_BOARD_BYTES) {
+      await reader.cancel();
+      throw new Error("Board file is too large");
+    }
+    chunks.push(r.value);
+  }
+  return parseBoard(JSON.parse(await new Blob(chunks as BlobPart[]).text())); // stream chunks are typed ArrayBufferLike
+}
