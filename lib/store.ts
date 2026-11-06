@@ -1,11 +1,11 @@
 import { create } from "zustand";
 import {
-  bounds, cloneShapes, commit, expandGroups, groupShapes, IDENTITY, insertFill, newId, pick, redo, rotateAbout,
+  bounds, clampView, cloneShapes, commit, expandGroups, groupShapes, IDENTITY, insertFill, newId, pick, redo, rotateAbout,
   scaleAbout, transformShapes, undo, ungroupShapes,
   type History, type Matrix, type Shape,
 } from "./board";
 
-export type Tool = "select" | "pen" | "highlight" | "eraser" | "fill" | "text" | "line" | "arrow" | "rect" | "ellipse";
+export type Tool = "select" | "hand" | "pen" | "highlight" | "eraser" | "fill" | "text" | "line" | "arrow" | "rect" | "ellipse";
 export type Background = "blank" | "grid" | "dots";
 
 type Style = { color?: string; size?: number };
@@ -19,6 +19,8 @@ type State = History & {
   size: number;
   background: Background;
   skewMode: boolean; // edge handles skew instead of scale (Ctrl/⌘ does the same while dragging)
+  view: Matrix; // world -> screen camera; not part of history, so panning is never undone
+  setView: (view: Matrix) => void;
   setTool: (tool: Tool) => void;
   setBackground: (b: Background) => void;
   /** Applies to the current selection too, so restyling selected shapes is one step. */
@@ -69,9 +71,12 @@ export const useBoard = create<State>()((set, get) => {
     size: 4,
     background: "grid",
     skewMode: false,
+    view: IDENTITY,
 
     setTool: (tool) => set({ tool, selected: tool === "select" ? get().selected : new Set() }),
     setBackground: (background) => set({ background }),
+    // The board fills the window, so the window is the screen the view maps to.
+    setView: (view) => set({ view: clampView(view, bounds(get().present), innerWidth, innerHeight) }),
     setStyle: (style) => {
       set(style);
       const { selected } = get();

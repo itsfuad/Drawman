@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import {
-  bounds, boxFromPoints, constrain, contains, expandGroups, fontSize, handleMatrix, IDENTITY, intersects, LINE_HEIGHT,
-  newId, pick, TEXT_FONT, textBox, transformBox, translation, type Box, type Handle, type Matrix, type Point, type Shape,
+  applyMatrix, bounds, boxFromPoints, constrain, contains, expandGroups, fontSize, handleMatrix, IDENTITY, intersects, invert,
+  LINE_HEIGHT, multiply, newId, pick, TEXT_FONT, textBox, transformBox, translation, zoomAt,
+  type Box, type Handle, type Matrix, type Point, type Shape,
 } from "@/lib/board";
 import { fillRegion } from "@/lib/fill";
 import { inkMask, insertImage, persistBoard } from "@/lib/files";
@@ -15,7 +16,8 @@ type Gesture =
   | { kind: "draw"; shape: Shape }
   | { kind: "transform"; handle: Handle | "move"; frame: Box; x: number; y: number; m: Matrix | null }
   | { kind: "marquee"; x: number; y: number; additive: boolean; box: Box | null }
-  | { kind: "erase"; ids: Set<string> };
+  | { kind: "erase"; ids: Set<string> }
+  | { kind: "pan"; x: number; y: number; view: Matrix }; // screen coords: the world moves under the pointer
 
 const PEN_ERASER_BUTTONS = 32; // stylus eraser end / barrel eraser button
 const FRAME_PAD = 6;
@@ -26,6 +28,15 @@ const SCALE_CURSORS: Record<Exclude<Handle, "rotate">, string> = {
 };
 
 const padBox = (b: Box, n: number): Box => ({ x: b.x - n, y: b.y - n, w: b.w + 2 * n, h: b.h + 2 * n });
+const MIN_GRID_CELL = 12; // grid/dots spacing doubles below this on screen so zooming out never turns into a grey wash
+
+/** On-screen pattern cell: follows zoom, coarsened in powers of two (still aligned with the world grid). */
+function gridCell(base: number, zoom: number) {
+  let cell = base * zoom;
+  while (cell < MIN_GRID_CELL) cell *= 2;
+  return cell;
+}
+
 const MIN_HANDLE_FRAME = 48; // handles spread at least this far so a dot-sized selection stays draggable in its middle
 
 /** Same center, grown to a minimum size. Handle math is delta-based, so only the handle layout uses this. */
@@ -51,6 +62,8 @@ export function Board() {
   const background = useBoard((s) => s.background);
   const tool = useBoard((s) => s.tool);
   const skewMode = useBoard((s) => s.skewMode);
+  const view = useBoard((s) => s.view);
+  const zoom = view[0];
 
   const svgRef = useRef<SVGSVGElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -61,15 +74,57 @@ export function Board() {
   const [live, setLive] = useState<Matrix | null>(null); // in-progress transform of the selection
   const [marquee, setMarquee] = useState<Box | null>(null);
   const [erasing, setErasing] = useState<Set<string>>(new Set());
+  const [panning, setPanning] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false); // hold Space to pan with any tool
   const [editing, setEditing] = useState<Shape | null>(null); // text shape open in the editor (new or existing)
   const editRef = useRef<Shape | null>(null); // mirror, so commit is safe to call twice (blur + pointerdown)
 
   useEffect(persistBoard, []);
 
-  const toPoint = (e: { clientX: number; clientY: number; pressure: number; pointerType: string }): Point => {
+  useEffect(() => {
+    const svg = svgRef.current!;
+    // Native listener: React's onWheel is passive, and without preventDefault Ctrl+wheel / trackpad pinch zooms the page.
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const s = useBoard.getState();
+      const px = e.deltaMode === 1 ? 16 : 1; // Firefox mouse wheels report lines
+      if (e.ctrlKey || e.metaKey) {
+        const r = svg.getBoundingClientRect();
+        const dy = Math.max(-50, Math.min(50, e.deltaY * px)); // mouse notch ~100, pinch ~1-10 per event
+        s.setView(zoomAt(s.view, Math.exp(-dy * 0.006), e.clientX - r.left, e.clientY - r.top));
+      } else {
+        s.setView(multiply(translation(-e.deltaX * px, -e.deltaY * px), s.view));
+      }
+    };
+    const typing = (e: KeyboardEvent) => (e.target as HTMLElement).closest?.("input, textarea, [contenteditable]");
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== " " || typing(e)) return;
+      e.preventDefault(); // no page scroll / button press
+      if (!e.repeat) setSpaceHeld(e.type === "keydown"); // autorepeat would re-render the board ~30x/s mid-pan
+    };
+    const release = () => setSpaceHeld(false); // keyup is lost if the window loses focus mid-hold
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", release);
+    return () => {
+      svg.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", release);
+    };
+  }, []);
+
+  const screenXY = (e: { clientX: number; clientY: number }): [number, number] => {
     const r = svgRef.current!.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+
+  const toWorld = (e: { clientX: number; clientY: number }) => applyMatrix(invert(view), ...screenXY(e));
+
+  const toPoint = (e: { clientX: number; clientY: number; pressure: number; pointerType: string }): Point => {
     // Pens can report 0 on touch-down/lift; floor it so the stroke tapers instead of vanishing. Mouse is a flat 0.5.
-    return [e.clientX - r.left, e.clientY - r.top, e.pointerType === "pen" ? Math.max(e.pressure, 0.1) : 0.5];
+    return [...toWorld(e), e.pointerType === "pen" ? Math.max(e.pressure, 0.1) : 0.5];
   };
 
   const samples = (e: PointerEvent) => {
@@ -109,11 +164,19 @@ export function Board() {
     if (e.pointerType === "pen") penSeen.current = true;
     else if (e.pointerType === "touch" && penSeen.current) return; // palm rejection once a stylus is in use
     const eraserTip = (e.buttons & PEN_ERASER_BUTTONS) !== 0;
+    const s = useBoard.getState();
+    const active = eraserTip ? "eraser" : s.tool;
+    if (e.button === 1 || spaceHeld || active === "hand") {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      pointer.current = e.pointerId;
+      const [sx, sy] = screenXY(e);
+      gesture.current = { kind: "pan", x: sx, y: sy, view };
+      setPanning(true);
+      return;
+    }
     if (e.button !== 0 && !eraserTip) return;
     const p = toPoint(e);
     const [x, y] = p;
-    const s = useBoard.getState();
-    const active = eraserTip ? "eraser" : s.tool;
 
     if (editRef.current) {
       commitText();
@@ -141,12 +204,15 @@ export function Board() {
       if (fillId) s.update(new Set([fillId]), { color: s.color });
       else if (!filling.current) {
         filling.current = true;
+        const [sx, sy] = screenXY(e); // the mask is rasterized in screen pixels
+        const toWorld = invert(view);
         inkMask()
           .then((mask) => {
-            const contour = mask && fillRegion(mask, x, y);
+            const contour = mask && fillRegion(mask, sx, sy);
             if (contour) {
               const { color, add } = useBoard.getState();
-              add({ id: newId(), type: "fill", points: contour.map(([px, py]): Point => [px, py, 0.5]), color, size: 1 });
+              const points = contour.map(([px, py]): Point => [...applyMatrix(toWorld, px, py), 0.5]);
+              add({ id: newId(), type: "fill", points, color, size: 1 });
             }
           })
           .catch((err) => console.error("Fill failed", err))
@@ -166,7 +232,7 @@ export function Board() {
       const handle = (e.target as Element).closest("[data-handle]")?.getAttribute("data-handle") as Handle | null;
       const current = bounds(pick(s.present, s.selected));
       if (handle && current) {
-        gesture.current = { kind: "transform", handle, frame: padBox(current, FRAME_PAD), x, y, m: null };
+        gesture.current = { kind: "transform", handle, frame: padBox(current, FRAME_PAD / zoom), x, y, m: null };
         return;
       }
       const id = (e.target as Element).closest("[data-id]")?.getAttribute("data-id");
@@ -185,7 +251,7 @@ export function Board() {
       const sel = useBoard.getState().selected; // select() grew it to whole groups
       const box = bounds(pick(s.present, sel));
       if (box && ((id && sel.has(id)) || (!id && contains(box, x, y)))) {
-        gesture.current = { kind: "transform", handle: "move", frame: padBox(box, FRAME_PAD), x, y, m: null };
+        gesture.current = { kind: "transform", handle: "move", frame: padBox(box, FRAME_PAD / zoom), x, y, m: null };
       } else {
         gesture.current = { kind: "marquee", x, y, additive: e.shiftKey, box: null };
         if (!e.shiftKey) s.select([]);
@@ -208,6 +274,11 @@ export function Board() {
   function onPointerMove(e: PointerEvent<SVGSVGElement>) {
     const g = gesture.current;
     if (!g || e.pointerId !== pointer.current) return;
+    if (g.kind === "pan") {
+      const [sx, sy] = screenXY(e);
+      useBoard.getState().setView(multiply(translation(sx - g.x, sy - g.y), g.view));
+      return;
+    }
     const [x, y] = toPoint(e);
     if (g.kind === "draw") {
       const d = g.shape;
@@ -255,11 +326,33 @@ export function Board() {
     setLive(null);
     setMarquee(null);
     setErasing(new Set());
+    setPanning(false);
   }
 
-  const selBox = bounds(pick(shapes, selected));
-  const frame = selBox && (live ? transformBox(padBox(selBox, FRAME_PAD), live) : padBox(selBox, FRAME_PAD));
+  // Selection chrome is drawn in screen space so handles keep their size at any zoom.
+  const selBox = useMemo(() => bounds(pick(shapes, selected)), [shapes, selected]);
+  const worldFrame = selBox && padBox(selBox, FRAME_PAD / zoom);
+  const frame = worldFrame && transformBox(live ? transformBox(worldFrame, live) : worldFrame, view);
+  const screenMarquee = marquee && transformBox(marquee, view);
   const liveTransform = svgMatrix(live ?? undefined);
+  const editingId = editing?.id;
+  // Independent of the view, so a pan/zoom frame only rewrites the camera <g> transform instead of diffing every shape.
+  const shapeLayer = useMemo(
+    () =>
+      shapes.map((s) =>
+        s.id === editingId ? null : // the editor shows it while open
+        // Cheap live preview: wrap in the matrix; the committed shape re-renders with true stroke widths on release.
+        liveTransform && selected.has(s.id) ? (
+          <g key={s.id} transform={liveTransform}>
+            <ShapeView shape={s} />
+          </g>
+        ) : (
+          <ShapeView key={s.id} shape={s} hidden={erasing.has(s.id)} />
+        ),
+      ),
+    [shapes, selected, liveTransform, erasing, editingId],
+  );
+  const grid = gridCell(32, zoom), dots = gridCell(24, zoom);
 
   const editSize = editing ? fontSize(editing.size) : 0;
   const editBox = editing && textBox(editing.text || " ", editSize);
@@ -271,7 +364,7 @@ export function Board() {
       data-board
       xmlns="http://www.w3.org/2000/svg"
       className="absolute inset-0 size-full touch-none select-none"
-      style={{ cursor: tool === "select" ? "default" : "crosshair" }}
+      style={{ cursor: panning ? "grabbing" : spaceHeld || tool === "hand" ? "grab" : tool === "select" ? "default" : "crosshair" }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => endGesture(e, true)}
@@ -283,8 +376,8 @@ export function Board() {
       onDragOver={(e) => e.preventDefault()} // required for drop to fire
       onDrop={(e) => {
         e.preventDefault();
-        const r = svgRef.current!.getBoundingClientRect();
-        const at = { x: e.clientX - r.left, y: e.clientY - r.top };
+        const [x, y] = toWorld(e);
+        const at = { x, y };
         for (const file of e.dataTransfer.files) if (file.type.startsWith("image/")) insertImage(file, at);
       }}
       onDoubleClick={(e) => {
@@ -293,28 +386,21 @@ export function Board() {
       }}
     >
       <defs>
-        <pattern id="bg-grid" width="32" height="32" patternUnits="userSpaceOnUse">
-          <path d="M32 0H0V32" fill="none" stroke="#e4e4e7" strokeWidth="1" />
+        {/* Tiles sized in screen px (not patternTransform) so lines and dots stay 1px crisp at any zoom. */}
+        <pattern id="bg-grid" x={view[4]} y={view[5]} width={grid} height={grid} patternUnits="userSpaceOnUse">
+          <path d={`M${grid} 0H0V${grid}`} fill="none" stroke="#e4e4e7" strokeWidth="1" />
         </pattern>
-        <pattern id="bg-dots" width="24" height="24" patternUnits="userSpaceOnUse">
-          <circle cx="12" cy="12" r="1.2" fill="#d4d4d8" />
+        <pattern id="bg-dots" x={view[4] - dots / 2} y={view[5] - dots / 2} width={dots} height={dots} patternUnits="userSpaceOnUse">
+          <circle cx={dots / 2} cy={dots / 2} r="1.2" fill="#d4d4d8" />
         </pattern>
       </defs>
       <rect data-bg width="100%" height="100%" fill="#ffffff" />
       {background !== "blank" && <rect data-bg width="100%" height="100%" fill={`url(#bg-${background})`} />}
 
-      {shapes.map((s) =>
-        s.id === editing?.id ? null : // the editor shows it while open
-        // Cheap live preview: wrap in the matrix; the committed shape re-renders with true stroke widths on release.
-        liveTransform && selected.has(s.id) ? (
-          <g key={s.id} transform={liveTransform}>
-            <ShapeView shape={s} />
-          </g>
-        ) : (
-          <ShapeView key={s.id} shape={s} hidden={erasing.has(s.id)} />
-        ),
-      )}
+      <g transform={svgMatrix(view)}>
+      {shapeLayer}
       {draft && <ShapeView shape={draft} />}
+      </g>
 
       {frame && (
         <g data-ui>
@@ -360,8 +446,8 @@ export function Board() {
             })}
         </g>
       )}
-      {marquee && (
-        <rect data-ui {...{ x: marquee.x, y: marquee.y, width: marquee.w, height: marquee.h }} fill="rgb(59 130 246 / 0.08)" stroke="#3b82f6" strokeWidth={1} pointerEvents="none" />
+      {screenMarquee && (
+        <rect data-ui {...{ x: screenMarquee.x, y: screenMarquee.y, width: screenMarquee.w, height: screenMarquee.h }} fill="rgb(59 130 246 / 0.08)" stroke="#3b82f6" strokeWidth={1} pointerEvents="none" />
       )}
     </svg>
     {editing && editBox && (
@@ -380,8 +466,8 @@ export function Board() {
         }}
         className="absolute top-0 left-0 m-0 resize-none overflow-hidden border-0 bg-transparent p-0 outline-1 outline-offset-2 outline-blue-500 outline-dashed"
         style={{
-          // Same local->world mapping as the SVG text, so rotated/skewed text edits in place.
-          transform: `matrix(${(editing.matrix ?? IDENTITY).join(",")}) translate(${editing.points[0][0]}px, ${editing.points[0][1]}px)`,
+          // Same local->world->screen mapping as the SVG text, so rotated/skewed text edits in place at any pan/zoom.
+          transform: `matrix(${view.join(",")}) matrix(${(editing.matrix ?? IDENTITY).join(",")}) translate(${editing.points[0][0]}px, ${editing.points[0][1]}px)`,
           transformOrigin: "0 0",
           width: editBox.w + editSize, // room for the next character before the width re-measures
           height: editBox.h,

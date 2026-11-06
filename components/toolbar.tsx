@@ -3,19 +3,22 @@
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import {
   ArrowUpRight, BringToFront, Circle, ClipboardPaste, Copy, Delete, Download, Eraser, FlipHorizontal2, FlipVertical2,
-  FolderOpen, Grid3x3, Group, Highlighter, ImageDown, ImagePlus, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw,
-  RotateCw, Scissors, SendToBack, Square, Trash2, Type, Undo2, Ungroup,
+  FolderOpen, Grid3x3, Group, Hand, Highlighter, ImageDown, ImagePlus, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw,
+  RotateCw, Scan, Scissors, SendToBack, Square, Trash2, Type, Undo2, Ungroup, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { bounds, fitView, IDENTITY, zoomAt } from "@/lib/board";
 import { exportPng, insertImage, openFile, saveFile } from "@/lib/files";
+import { useShallow } from "zustand/react/shallow";
 import { useBoard, type Background, type Tool } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 const TOOLS: { tool: Tool; key: string; label: string; icon: ReactNode }[] = [
   { tool: "select", key: "v", label: "Select", icon: <MousePointer2 /> },
+  { tool: "hand", key: "", label: "Pan (or hold Space / middle-drag)", icon: <Hand /> },
   { tool: "pen", key: "p", label: "Pen", icon: <PenLine /> },
   { tool: "highlight", key: "h", label: "Highlighter", icon: <Highlighter /> },
   { tool: "eraser", key: "e", label: "Eraser", icon: <Eraser /> },
@@ -30,6 +33,18 @@ const TOOLS: { tool: Tool; key: string; label: string; icon: ReactNode }[] = [
 const COLORS = ["#18181b", "#71717a", "#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#2563eb", "#7c3aed"];
 const SIZES = [2, 4, 8, 16];
 const BACKGROUNDS: Background[] = ["grid", "dots", "blank"];
+
+// The board fills the window, so the window centre is the view centre.
+const zoomBy = (k: number) => {
+  const s = useBoard.getState();
+  s.setView(zoomAt(s.view, k, innerWidth / 2, innerHeight / 2));
+};
+const fitContent = () => {
+  const s = useBoard.getState();
+  const b = bounds(s.present);
+  s.setView(b ? fitView(b, innerWidth, innerHeight) : IDENTITY);
+};
+const ZOOM_STEP = 1.25;
 
 const isMac = typeof navigator !== "undefined" && /Mac|iP(hone|ad)/.test(navigator.platform);
 const mod = (k: string) => (isMac ? `⌘${k}` : `Ctrl+${k}`);
@@ -98,6 +113,10 @@ function useShortcuts() {
           x: s.cut,
           s: saveFile,
           g: e.shiftKey ? s.ungroupSelected : s.groupSelected,
+          "=": () => zoomBy(ZOOM_STEP),
+          "+": () => zoomBy(ZOOM_STEP),
+          "-": () => zoomBy(1 / ZOOM_STEP),
+          "0": () => zoomBy(1 / s.view[0]),
           a: () => {
             s.setTool("select");
             s.select(s.present.map((sh) => sh.id));
@@ -115,6 +134,7 @@ function useShortcuts() {
         V: () => s.flipSelected("y"),
         "]": () => s.reorderSelected("front"),
         "[": () => s.reorderSelected("back"),
+        "!": fitContent, // Shift+1
       };
       if (selectionKeys[e.key]) selectionKeys[e.key](); // e.key is "H" (not "h") only with Shift held
       else if (k === "delete" || k === "backspace") s.remove(s.selected);
@@ -143,7 +163,10 @@ function useShortcuts() {
 
 export function Toolbar() {
   useShortcuts();
-  const s = useBoard();
+  // Everything but the view: panning changes it every frame and would re-render every tooltip here.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- omitting view is the point
+  const s = useBoard(useShallow(({ view, ...rest }) => rest));
+  const zoom = useBoard((st) => Math.round(st.view[0] * 100));
   const hasSelection = s.selected.size > 0;
 
   return (
@@ -315,6 +338,27 @@ export function Toolbar() {
         <Tip label="Delete selection" kbd="Del">
           <Button size="icon" variant="ghost" aria-label="Delete selection" disabled={!hasSelection} onClick={() => s.remove(s.selected)}>
             <Delete />
+          </Button>
+        </Tip>
+        <Separator orientation="vertical" className="mx-1 h-5" />
+        <Tip label="Zoom out" kbd={mod("-")}>
+          <Button size="icon" variant="ghost" aria-label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
+            <ZoomOut />
+          </Button>
+        </Tip>
+        <Tip label="Reset to 100%" kbd={mod("0")}>
+          <Button variant="ghost" className="w-14 px-0 tabular-nums" aria-label="Reset zoom" onClick={() => zoomBy(1 / useBoard.getState().view[0])}>
+            {zoom}%
+          </Button>
+        </Tip>
+        <Tip label="Zoom in" kbd={mod("+")}>
+          <Button size="icon" variant="ghost" aria-label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
+            <ZoomIn />
+          </Button>
+        </Tip>
+        <Tip label="Fit to content" kbd="Shift+1">
+          <Button size="icon" variant="ghost" aria-label="Fit to content" onClick={fitContent}>
+            <Scan />
           </Button>
         </Tip>
         <Separator orientation="vertical" className="mx-1 h-5" />

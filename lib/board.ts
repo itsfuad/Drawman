@@ -65,6 +65,11 @@ export const applyMatrix = (m: Matrix, x: number, y: number): [number, number] =
   m[1] * x + m[3] * y + m[5],
 ];
 
+export function invert([a, b, c, d, e, f]: Matrix): Matrix {
+  const det = a * d - b * c;
+  return [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det];
+}
+
 export const translation = (tx: number, ty: number): Matrix => [1, 0, 0, 1, tx, ty];
 const about = (m: Matrix, cx: number, cy: number) => multiply(translation(cx, cy), multiply(m, translation(-cx, -cy)));
 export const scaleAbout = (sx: number, sy: number, cx: number, cy: number) => about([sx, 0, 0, sy, 0, 0], cx, cy);
@@ -262,6 +267,38 @@ export function intersects(a: Box, b: Box): boolean {
 export function contains(b: Box, x: number, y: number): boolean {
   return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
 }
+
+// View = world -> screen matrix, kept to uniform scale + translation so view[0] is the zoom.
+export const MIN_ZOOM = 0.1;
+export const MAX_ZOOM = 8;
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
+/** Scales the view by k (clamped) keeping screen point (x, y) fixed. */
+export function zoomAt(view: Matrix, k: number, x: number, y: number): Matrix {
+  const f = clampZoom(view[0] * k) / view[0];
+  return multiply(scaleAbout(f, f, x, y), view);
+}
+
+/** View that centres box b in a w*h screen, never zooming in past 100%. */
+export function fitView(b: Box, w: number, h: number, pad = 80): Matrix {
+  const z = clampZoom(Math.min(1, (w - 2 * pad) / b.w, (h - 2 * pad) / b.h));
+  return [z, 0, 0, z, w / 2 - z * (b.x + b.w / 2), h / 2 - z * (b.y + b.h / 2)];
+}
+
+/**
+ * Keeps the screen centre over the content plus the home screen (0,0,w,h), so the pannable area grows with the
+ * drawing instead of being endless: content can reach the screen centre but never be panned out of sight.
+ */
+export function clampView(view: Matrix, content: Box | null, w: number, h: number): Matrix {
+  const x0 = Math.min(0, content?.x ?? 0), x1 = Math.max(w, content ? content.x + content.w : w);
+  const y0 = Math.min(0, content?.y ?? 0), y1 = Math.max(h, content ? content.y + content.h : h);
+  const [cx, cy] = applyMatrix(invert(view), w / 2, h / 2);
+  const nx = Math.min(x1, Math.max(x0, cx)), ny = Math.min(y1, Math.max(y0, cy));
+  return nx === cx && ny === cy ? view : multiply(translation((cx - nx) * view[0], (cy - ny) * view[0]), view);
+}
+
+export const isView = (v: unknown): v is Matrix =>
+  Array.isArray(v) && v.length === 6 && v.every(Number.isFinite) && v[0] >= MIN_ZOOM && v[0] <= MAX_ZOOM;
 
 /** Validates untrusted JSON (file import / localStorage). Throws on anything malformed. */
 export function parseBoard(raw: unknown): Shape[] {
