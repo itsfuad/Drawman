@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import {
-  bounds, boxFromPoints, constrain, contains, handleMatrix, intersects, newId, pick, transformBox, translation,
-  type Box, type Handle, type Matrix, type Point, type Shape,
+  bounds, boxFromPoints, constrain, contains, expandGroups, fontSize, handleMatrix, IDENTITY, intersects, LINE_HEIGHT,
+  newId, pick, TEXT_FONT, textBox, transformBox, translation, type Box, type Handle, type Matrix, type Point, type Shape,
 } from "@/lib/board";
 import { fillRegion } from "@/lib/fill";
 import { inkMask, persistBoard } from "@/lib/files";
@@ -61,6 +61,8 @@ export function Board() {
   const [live, setLive] = useState<Matrix | null>(null); // in-progress transform of the selection
   const [marquee, setMarquee] = useState<Box | null>(null);
   const [erasing, setErasing] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState<Shape | null>(null); // text shape open in the editor (new or existing)
+  const editRef = useRef<Shape | null>(null); // mirror, so commit is safe to call twice (blur + pointerdown)
 
   useEffect(persistBoard, []);
 
@@ -75,7 +77,32 @@ export function Board() {
     return coalesced?.length ? coalesced : [e.nativeEvent];
   };
 
+  function openEditor(shape: Shape | null) {
+    editRef.current = shape;
+    setEditing(shape);
+  }
+
+  /** Closes the editor: one history entry for a real change; empty text drops a new shape or deletes an existing one. */
+  function commitText() {
+    const ed = editRef.current;
+    if (!ed) return;
+    openEditor(null);
+    const s = useBoard.getState();
+    const existing = s.present.find((x) => x.id === ed.id);
+    const text = ed.text ?? "";
+    if (!text.trim()) {
+      if (existing) s.remove(new Set([ed.id]));
+    } else if (!existing) s.add(ed);
+    else if (existing.text !== text) s.update(new Set([ed.id]), { text });
+  }
+
   const idAt = (x: number, y: number) => document.elementFromPoint(x, y)?.closest("[data-id]")?.getAttribute("data-id");
+
+  // Hit-tests by position: after pointer capture, click/dblclick events target the <svg> itself.
+  const textAt = (e: { clientX: number; clientY: number }) => {
+    const id = idAt(e.clientX, e.clientY);
+    return useBoard.getState().present.find((x) => x.id === id && x.type === "text");
+  };
 
   function onPointerDown(e: PointerEvent<SVGSVGElement>) {
     if (pointer.current !== null) return;
@@ -88,10 +115,30 @@ export function Board() {
     const s = useBoard.getState();
     const active = eraserTip ? "eraser" : s.tool;
 
+    if (editRef.current) {
+      commitText();
+      if (active === "text") return; // a click outside the open editor just closes it
+    }
+
+    if (active === "text") {
+      const size = fontSize(s.size);
+      openEditor(
+        textAt(e) ?? {
+          id: newId(),
+          type: "text",
+          points: [[x, y - (size * LINE_HEIGHT) / 2, 0.5]], // first line centred on the click
+          text: "",
+          color: s.color,
+          size: s.size,
+        },
+      );
+      return;
+    }
+
     if (active === "fill") {
       // One-shot click, no gesture: recolor a fill under the pointer, else flood the closed area.
       const fillId = (e.target as Element).closest("[data-fill]")?.getAttribute("data-id");
-      if (fillId) s.restyle(new Set([fillId]), { color: s.color });
+      if (fillId) s.update(new Set([fillId]), { color: s.color });
       else if (!filling.current) {
         filling.current = true;
         inkMask()
@@ -123,15 +170,19 @@ export function Board() {
         return;
       }
       const id = (e.target as Element).closest("[data-id]")?.getAttribute("data-id");
-      let sel = s.selected;
       if (id && e.shiftKey) {
-        sel = new Set(sel);
-        if (!sel.delete(id)) sel.add(id);
-        s.select(sel);
-      } else if (id && !sel.has(id)) {
-        sel = new Set([id]);
-        s.select(sel);
+        // Toggle the whole group; toggling one member would just be re-expanded by select().
+        const next = new Set(s.selected);
+        const removing = next.has(id);
+        for (const member of expandGroups(s.present, new Set([id]))) {
+          if (removing) next.delete(member);
+          else next.add(member);
+        }
+        s.select(next);
+      } else if (id && !s.selected.has(id)) {
+        s.select([id]);
       }
+      const sel = useBoard.getState().selected; // select() grew it to whole groups
       const box = bounds(pick(s.present, sel));
       if (box && ((id && sel.has(id)) || (!id && contains(box, x, y)))) {
         gesture.current = { kind: "transform", handle: "move", frame: padBox(box, FRAME_PAD), x, y, m: null };
@@ -207,11 +258,14 @@ export function Board() {
   }
 
   const selBox = bounds(pick(shapes, selected));
-  const layered = [...shapes.filter((s) => s.type === "fill"), ...shapes.filter((s) => s.type !== "fill")]; // fills under ink
   const frame = selBox && (live ? transformBox(padBox(selBox, FRAME_PAD), live) : padBox(selBox, FRAME_PAD));
   const liveTransform = live ? `matrix(${live.join(" ")})` : undefined;
 
+  const editSize = editing ? fontSize(editing.size) : 0;
+  const editBox = editing && textBox(editing.text || " ", editSize);
+
   return (
+    <>
     <svg
       ref={svgRef}
       data-board
@@ -224,6 +278,12 @@ export function Board() {
       onPointerCancel={(e) => endGesture(e, false)}
       onLostPointerCapture={(e) => endGesture(e, true)}
       onContextMenu={(e) => e.preventDefault()}
+      // Text tool: keep focus in the editor that pointerdown just opened (mousedown would move it to <body>).
+      onMouseDown={(e) => tool === "text" && e.preventDefault()}
+      onDoubleClick={(e) => {
+        const text = tool === "select" && textAt(e);
+        if (text) openEditor(text);
+      }}
     >
       <defs>
         <pattern id="bg-grid" width="32" height="32" patternUnits="userSpaceOnUse">
@@ -236,7 +296,8 @@ export function Board() {
       <rect data-bg width="100%" height="100%" fill="#ffffff" />
       {background !== "blank" && <rect data-bg width="100%" height="100%" fill={`url(#bg-${background})`} />}
 
-      {layered.map((s) =>
+      {shapes.map((s) =>
+        s.id === editing?.id ? null : // the editor shows it while open
         // Cheap live preview: wrap in the matrix; the committed shape re-renders with true stroke widths on release.
         liveTransform && selected.has(s.id) ? (
           <g key={s.id} transform={liveTransform}>
@@ -296,5 +357,33 @@ export function Board() {
         <rect data-ui {...{ x: marquee.x, y: marquee.y, width: marquee.w, height: marquee.h }} fill="rgb(59 130 246 / 0.08)" stroke="#3b82f6" strokeWidth={1} pointerEvents="none" />
       )}
     </svg>
+    {editing && editBox && (
+      <textarea
+        autoFocus
+        aria-label="Text"
+        spellCheck={false}
+        value={editing.text}
+        onChange={(e) => openEditor({ ...editing, text: e.target.value })}
+        onBlur={commitText}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
+            e.preventDefault();
+            commitText();
+          }
+        }}
+        className="absolute top-0 left-0 m-0 resize-none overflow-hidden border-0 bg-transparent p-0 outline-1 outline-offset-2 outline-blue-500 outline-dashed"
+        style={{
+          // Same local->world mapping as the SVG text, so rotated/skewed text edits in place.
+          transform: `matrix(${(editing.matrix ?? IDENTITY).join(",")}) translate(${editing.points[0][0]}px, ${editing.points[0][1]}px)`,
+          transformOrigin: "0 0",
+          width: editBox.w + editSize, // room for the next character before the width re-measures
+          height: editBox.h,
+          font: `${editSize}px/${LINE_HEIGHT} ${TEXT_FONT}`,
+          color: editing.color,
+          whiteSpace: "pre",
+        }}
+      />
+    )}
+    </>
   );
 }

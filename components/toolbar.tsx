@@ -3,8 +3,8 @@
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import {
   ArrowUpRight, BringToFront, Circle, ClipboardPaste, Copy, Delete, Download, Eraser, FlipHorizontal2, FlipVertical2,
-  FolderOpen, Grid3x3, Highlighter, ImageDown, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw, RotateCw,
-  Scissors, SendToBack, Square, Trash2, Undo2,
+  FolderOpen, Grid3x3, Group, Highlighter, ImageDown, Italic, Minus, MousePointer2, PaintBucket, PenLine, Redo2, RotateCcw,
+  RotateCw, Scissors, SendToBack, Square, Trash2, Type, Undo2, Ungroup,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -20,6 +20,7 @@ const TOOLS: { tool: Tool; key: string; label: string; icon: ReactNode }[] = [
   { tool: "highlight", key: "h", label: "Highlighter", icon: <Highlighter /> },
   { tool: "eraser", key: "e", label: "Eraser", icon: <Eraser /> },
   { tool: "fill", key: "f", label: "Fill closed area", icon: <PaintBucket /> },
+  { tool: "text", key: "t", label: "Text", icon: <Type /> },
   { tool: "line", key: "l", label: "Line", icon: <Minus /> },
   { tool: "arrow", key: "a", label: "Arrow", icon: <ArrowUpRight /> },
   { tool: "rect", key: "r", label: "Rectangle", icon: <Square /> },
@@ -72,6 +73,7 @@ function useShortcuts() {
           x: s.cut,
           v: s.paste,
           s: saveFile,
+          g: e.shiftKey ? s.ungroupSelected : s.groupSelected,
           a: () => {
             s.setTool("select");
             s.select(s.present.map((sh) => sh.id));
@@ -226,6 +228,23 @@ export function Toolbar() {
           <Tip label="Send to back" kbd="[">
             <Button size="icon" variant="ghost" aria-label="Send to back" onClick={() => s.reorderSelected("back")}>
               <SendToBack />
+            </Button>
+          </Tip>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <Tip label="Group" kbd={mod("G")}>
+            <Button size="icon" variant="ghost" aria-label="Group" disabled={s.selected.size < 2} onClick={s.groupSelected}>
+              <Group />
+            </Button>
+          </Tip>
+          <Tip label="Ungroup" kbd={mod("Shift+G")}>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Ungroup"
+              disabled={!s.present.some((sh) => sh.group && s.selected.has(sh.id))}
+              onClick={s.ungroupSelected}
+            >
+              <Ungroup />
             </Button>
           </Tip>
         </Bar>

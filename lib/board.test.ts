@@ -2,8 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  applyMatrix, bounds, cloneShapes, commit, constrain, handleMatrix, IDENTITY, multiply, parseBoard, redo, rotateAbout,
-  scaleAbout, serializeBoard, transformShapes, translation, undo, worldPoints, type History, type Matrix, type Shape,
+  applyMatrix, bounds, cloneShapes, commit, constrain, expandGroups, fontSize, groupShapes, handleMatrix, IDENTITY,
+  insertFill, LINE_HEIGHT, multiply, parseBoard, redo, rotateAbout, scaleAbout, serializeBoard, transformShapes,
+  translation, undo, ungroupShapes, worldPoints, type History, type Matrix, type Shape,
 } from "./board.ts";
 
 const dot = (id: string, x: number, y: number): Shape => ({ id, type: "stroke", points: [[x, y, 0.5]], color: "#000000", size: 4 });
@@ -88,4 +89,51 @@ test("parseBoard round-trips and rejects bad input", () => {
   assert.throws(() => parseBoard({ shapes: [{ ...dot("a", 0, 0), points: [[0, "1", 0]] }] }));
   assert.throws(() => parseBoard({ shapes: [{ ...dot("a", 0, 0), matrix: [1, 0, 0, 1, 0] }] }));
   assert.throws(() => parseBoard({ shapes: [{ ...dot("a", 0, 0), matrix: [1, 0, 0, 1, 0, null] }] }));
+});
+
+const line = (id: string, x1: number, y1: number, x2: number, y2: number): Shape => ({
+  id, type: "line", points: [[x1, y1, 0.5], [x2, y2, 0.5]], color: "#000000", size: 4,
+});
+const fillAt = (id: string, x: number, y: number, w: number): Shape => ({
+  id, type: "fill", points: [[x, y, 0.5], [x + w, y, 0.5], [x + w, y + w, 0.5], [x, y + w, 0.5]], color: "#ff0000", size: 1,
+});
+const ids = (shapes: Shape[]) => shapes.map((s) => s.id).join(",");
+
+test("insertFill: under the ink it overlaps, above overlapping fills, on top when alone", () => {
+  const tri = [line("a", 0, 100, 50, 0), line("b", 50, 0, 100, 100), line("c", 100, 100, 0, 100)];
+  assert.equal(ids(insertFill(tri, fillAt("f", 10, 30, 60))), "f,a,b,c");
+  // big outline filled, then a small outline inside it filled: new fill must sit above the big fill
+  const nested = [fillAt("big", 0, 0, 200), line("outer", 0, 0, 200, 200), line("inner", 50, 50, 100, 100)];
+  assert.equal(ids(insertFill(nested, fillAt("small", 55, 55, 40))), "big,small,outer,inner");
+  assert.equal(ids(insertFill([dot("a", 500, 500)], fillAt("f", 0, 0, 10))), "a,f");
+});
+
+test("parseBoard: v1 files keep fills under ink, v2 keeps stored order", () => {
+  const shapes = [line("a", 0, 0, 10, 10), fillAt("f", 0, 0, 10)];
+  assert.equal(ids(parseBoard({ version: 1, shapes })), "f,a");
+  assert.equal(ids(parseBoard({ shapes })), "f,a", "files without a version are v1");
+  assert.equal(ids(parseBoard(JSON.parse(serializeBoard(shapes)))), "a,f");
+});
+
+test("groups: expand, stack together, ungroup, paste gets a new group", () => {
+  const shapes = [dot("a", 0, 0), dot("x", 1, 1), dot("b", 2, 2), dot("y", 3, 3)];
+  const grouped = groupShapes(shapes, new Set(["a", "b"]), "g1");
+  assert.equal(ids(grouped), "x,a,b,y", "members gathered at the topmost member");
+  assert.deepEqual([...expandGroups(grouped, new Set(["a"]))].sort(), ["a", "b"]);
+  assert.equal(ungroupShapes(grouped, new Set(["a", "b"])).filter((s) => s.group).length, 0);
+  const copies = cloneShapes(grouped.filter((s) => s.group), 16);
+  assert.ok(copies[0].group && copies[0].group === copies[1].group && copies[0].group !== "g1");
+  assert.equal(parseBoard(JSON.parse(serializeBoard(grouped)))[1].group, "g1", "group survives save/load");
+});
+
+test("text: box from estimated metrics, validated on load", () => {
+  // Node has no canvas, so widths use the fixed 0.55em estimate.
+  const t: Shape = { id: "t", type: "text", points: [[10, 20, 0.5]], text: "ab\nabcd", color: "#000000", size: 4 };
+  const size = fontSize(4);
+  const [, ne, se] = worldPoints(t);
+  assert.ok(Math.abs(ne[0] - (10 + 4 * size * 0.55)) < 1e-9, "width = longest line");
+  assert.ok(Math.abs(se[1] - (20 + 2 * size * LINE_HEIGHT)) < 1e-9, "height = lines * line height");
+  assert.equal(parseBoard(JSON.parse(serializeBoard([t])))[0].text, "ab\nabcd");
+  assert.throws(() => parseBoard({ version: 2, shapes: [{ ...t, text: 5 }] }));
+  assert.throws(() => parseBoard({ version: 2, shapes: [{ ...t, text: "x".repeat(10_001) }] }));
 });
